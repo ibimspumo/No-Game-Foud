@@ -1,195 +1,219 @@
 <script lang="ts">
-	import { getGameContext, formatNumber, ResourceId } from '$lib/engine';
+	/**
+	 * @fileoverview Main game page.
+	 * Integrates all UI components into a cohesive game interface.
+	 *
+	 * @module routes/+page
+	 */
+
+	import { getGameContext } from '$lib/engine';
+	import { Header, Sidebar, AchievementNotification, PhaseView } from '$lib/components';
 
 	const game = getGameContext();
 
-	// Reactive values from the game engine
-	let pixels = $derived(game.resources.getAmount(ResourceId.PIXELS));
-	let pixelRate = $derived(game.resources.getProductionRate(ResourceId.PIXELS));
+	// Mobile sidebar state
+	let sidebarOpen = $state(false);
+
+	// Debug info
 	let runTime = $derived(game.runTime);
 	let tickCount = $derived(game.tickCount);
 	let status = $derived(game.status);
+	let showDebug = $state(false);
 
 	/**
-	 * Handle pixel click
+	 * Toggle sidebar visibility (mobile).
 	 */
-	function handleClick() {
-		game.click(ResourceId.PIXELS);
+	function toggleSidebar(): void {
+		sidebarOpen = !sidebarOpen;
 	}
 
 	/**
-	 * Add some production rate (for testing)
+	 * Close sidebar (mobile).
 	 */
-	function addProduction() {
-		const currentRate = game.resources.getProductionRate(ResourceId.PIXELS);
-		game.resources.setProductionRate(ResourceId.PIXELS, currentRate.add(1));
+	function closeSidebar(): void {
+		sidebarOpen = false;
 	}
 
 	/**
-	 * Toggle pause
+	 * Toggle debug panel.
 	 */
-	function togglePause() {
-		if (game.isPaused) {
-			game.resume();
-		} else {
-			game.pause();
+	function toggleDebug(): void {
+		showDebug = !showDebug;
+	}
+
+	/**
+	 * Handle keyboard shortcuts.
+	 */
+	function handleKeydown(event: KeyboardEvent): void {
+		// Escape closes sidebar
+		if (event.key === 'Escape' && sidebarOpen) {
+			closeSidebar();
+		}
+		// Ctrl+D toggles debug
+		if (event.ctrlKey && event.key === 'd') {
+			event.preventDefault();
+			toggleDebug();
 		}
 	}
 </script>
 
-<main>
-	<header>
-		<h1>NO GAME FOUND</h1>
-		<p class="subtitle">Phase 1: The Pixel</p>
-	</header>
+<svelte:window onkeydown={handleKeydown} />
 
-	<section class="game-area">
-		<div class="pixel-display">
-			<button class="pixel" onclick={handleClick} aria-label="Click to generate pixels">
-				<span class="pixel-icon">■</span>
-			</button>
-		</div>
+<div class="game-layout">
+	<!-- Header -->
+	<Header />
 
-		<div class="stats">
-			<div class="stat">
-				<span class="label">Pixels</span>
-				<span class="value">{formatNumber(pixels)}</span>
-			</div>
-			<div class="stat">
-				<span class="label">Rate</span>
-				<span class="value">{formatNumber(pixelRate)}/s</span>
-			</div>
-		</div>
-	</section>
+	<!-- Main content area -->
+	<div class="game-main">
+		<!-- Sidebar (collapsible on mobile) -->
+		<Sidebar open={sidebarOpen} onClose={closeSidebar} />
 
-	<section class="controls">
-		<button onclick={addProduction}>+1 Pixel/s</button>
-		<button onclick={togglePause}>
-			{game.isPaused ? 'Resume' : 'Pause'}
+		<!-- Mobile sidebar toggle -->
+		<button
+			class="sidebar-toggle"
+			class:open={sidebarOpen}
+			onclick={toggleSidebar}
+			aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+			aria-expanded={sidebarOpen}
+		>
+			<span class="toggle-icon">{sidebarOpen ? '✕' : '☰'}</span>
 		</button>
-	</section>
 
-	<footer class="debug">
-		<span>Status: {status}</span>
-		<span>Run Time: {runTime.toFixed(1)}s</span>
-		<span>Ticks: {tickCount}</span>
-	</footer>
-</main>
+		<!-- Phase view (main game area) -->
+		<main class="game-content">
+			<PhaseView />
+		</main>
+	</div>
+
+	<!-- Achievement notifications -->
+	<AchievementNotification />
+
+	<!-- Debug panel (Ctrl+D to toggle) -->
+	{#if showDebug}
+		<div class="debug-panel">
+			<button class="debug-close" onclick={toggleDebug} aria-label="Close debug panel">✕</button>
+			<h3>Debug Info</h3>
+			<div class="debug-info">
+				<span>Status: {status}</span>
+				<span>Run Time: {runTime.toFixed(1)}s</span>
+				<span>Ticks: {tickCount}</span>
+				<span>Phase: {game.phases.currentPhase}</span>
+				<span>Mode: {game.phases.visualMode}</span>
+			</div>
+		</div>
+	{/if}
+</div>
 
 <style>
-	main {
+	.game-layout {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		justify-content: center;
 		min-height: 100vh;
-		padding: 2rem;
-		gap: 2rem;
+		background-color: var(--color-bg);
+		color: var(--color-text);
 	}
 
-	header {
-		text-align: center;
+	.game-main {
+		display: flex;
+		flex: 1;
+		position: relative;
+		overflow: hidden;
 	}
 
-	h1 {
-		font-size: 2rem;
-		letter-spacing: 0.5rem;
-		margin-bottom: 0.5rem;
-		color: #888;
-	}
-
-	.subtitle {
-		color: #666;
-		font-size: 0.875rem;
-	}
-
-	.game-area {
+	.game-content {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 2rem;
+		overflow: auto;
 	}
 
-	.pixel-display {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.pixel {
-		background: transparent;
-		border: none;
+	/* Mobile sidebar toggle button */
+	.sidebar-toggle {
+		display: none;
+		position: fixed;
+		bottom: var(--spacing-4);
+		right: var(--spacing-4);
+		width: 48px;
+		height: 48px;
+		border-radius: var(--radius-full);
+		background-color: var(--color-surface);
+		border: 1px solid var(--color-border);
+		color: var(--color-text);
 		cursor: pointer;
-		padding: 2rem;
-		transition: transform 0.1s ease;
+		z-index: 60;
+		transition:
+			background-color var(--duration-fast),
+			transform var(--duration-fast);
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 	}
 
-	.pixel:hover {
-		transform: scale(1.1);
+	.sidebar-toggle:hover {
+		background-color: var(--color-surface-hover);
+		transform: scale(1.05);
 	}
 
-	.pixel:active {
+	.sidebar-toggle:active {
 		transform: scale(0.95);
 	}
 
-	.pixel-icon {
-		font-size: 4rem;
-		color: #fff;
-		display: block;
-		text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+	.toggle-icon {
+		font-size: var(--font-size-lg);
 	}
 
-	.stats {
-		display: flex;
-		gap: 2rem;
+	/* Debug panel */
+	.debug-panel {
+		position: fixed;
+		bottom: var(--spacing-4);
+		left: var(--spacing-4);
+		background-color: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		padding: var(--spacing-4);
+		z-index: 100;
+		font-size: var(--font-size-xs);
+		min-width: 200px;
 	}
 
-	.stat {
+	.debug-panel h3 {
+		margin: 0 0 var(--spacing-2);
+		font-size: var(--font-size-sm);
+		color: var(--color-text-muted);
+	}
+
+	.debug-info {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.25rem;
+		gap: var(--spacing-1);
+		color: var(--color-text-dim);
 	}
 
-	.label {
-		font-size: 0.75rem;
-		color: #666;
-		text-transform: uppercase;
-		letter-spacing: 0.1rem;
-	}
-
-	.value {
-		font-size: 1.5rem;
-		color: #fff;
-	}
-
-	.controls {
-		display: flex;
-		gap: 1rem;
-	}
-
-	.controls button {
-		background: #222;
-		color: #fff;
-		border: 1px solid #444;
-		padding: 0.5rem 1rem;
+	.debug-close {
+		position: absolute;
+		top: var(--spacing-2);
+		right: var(--spacing-2);
+		background: transparent;
+		border: none;
+		color: var(--color-text-dim);
 		cursor: pointer;
-		font-family: inherit;
-		font-size: 0.875rem;
-		transition: background-color 0.2s ease;
+		font-size: var(--font-size-sm);
+		padding: var(--spacing-1);
+		line-height: 1;
 	}
 
-	.controls button:hover {
-		background: #333;
+	.debug-close:hover {
+		color: var(--color-text);
 	}
 
-	.debug {
-		position: fixed;
-		bottom: 1rem;
-		left: 1rem;
-		font-size: 0.75rem;
-		color: #444;
-		display: flex;
-		gap: 1rem;
+	/* Mobile styles */
+	@media (max-width: 768px) {
+		.sidebar-toggle {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.debug-panel {
+			bottom: 70px; /* Above the toggle button */
+		}
 	}
 </style>

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import favicon from '$lib/assets/favicon.svg';
 	import { Game, setGameContext } from '$lib/engine';
+	import '$lib/components/styles.css';
 
 	let { children } = $props();
 

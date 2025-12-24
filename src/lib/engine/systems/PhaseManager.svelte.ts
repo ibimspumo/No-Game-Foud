@@ -164,6 +164,18 @@ export class PhaseManager implements Manager {
 	 */
 	private transitionCallbacks: TransitionCallback[] = [];
 
+	/**
+	 * Cached transition progress (reactive).
+	 * Updated each tick for UI reactivity.
+	 */
+	private _transitionProgress = $state(0);
+
+	/**
+	 * Cached can advance state (reactive).
+	 * Updated each tick for UI reactivity.
+	 */
+	private _canAdvance = $state(false);
+
 	// ========================================================================
 	// Derived State (as getters to avoid initialization order issues)
 	// ========================================================================
@@ -184,16 +196,18 @@ export class PhaseManager implements Manager {
 
 	/**
 	 * Whether transition to next phase is ready.
+	 * Returns cached reactive value updated each tick.
 	 */
 	get canAdvance(): boolean {
-		return this.checkTransitionReady();
+		return this._canAdvance;
 	}
 
 	/**
 	 * Progress towards next phase transition (0-1).
+	 * Returns cached reactive value updated each tick.
 	 */
 	get transitionProgress(): number {
-		return this.calculateTransitionProgress();
+		return this._transitionProgress;
 	}
 
 	/**
@@ -303,6 +317,10 @@ export class PhaseManager implements Manager {
 			progress.timeSpent += deltaTime;
 		}
 
+		// Update cached reactive values for UI reactivity
+		this._transitionProgress = this.calculateTransitionProgress();
+		this._canAdvance = this.checkTransitionReady();
+
 		// Don't check transitions while already transitioning
 		if (this.isTransitioning) return;
 
@@ -310,7 +328,7 @@ export class PhaseManager implements Manager {
 		// Note: Transition is not automatic - player must trigger it
 		// unless autoTransition is enabled for the phase
 		const def = this.currentDefinition;
-		if (def?.autoTransition && this.canAdvance) {
+		if (def?.autoTransition && this._canAdvance) {
 			this.advancePhase();
 		}
 	}

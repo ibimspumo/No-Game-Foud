@@ -31,7 +31,7 @@ import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
 import { registerStoryForPhases } from '../data/story';
 import { getInitialUpgrades, getNewUpgradesForPhase } from '../data/upgrades';
-import { D, ZERO, ONE, mul } from '../utils/decimal';
+import { D, ZERO, ONE, mul, type Decimal } from '../utils/decimal';
 import { calculateOfflineProgressWithBreakdown } from '../utils/OfflineProgress';
 
 /**
@@ -173,6 +173,12 @@ export class Game {
 	 */
 	lastError = $state<string | null>(null);
 
+	/**
+	 * Accumulated time for auto-clicker (in seconds).
+	 * When this reaches 1.0 / autoClickRate, an auto-click is performed.
+	 */
+	private autoClickAccumulator = 0;
+
 	// ============================================================================
 	// Constructor
 	// ============================================================================
@@ -292,13 +298,17 @@ export class Game {
 			let isNewGame = true;
 			let lastPlayedAt: number | null = null;
 
-			if (this.save.hasSave()) {
-				const loadedState = this.save.load();
-				if (loadedState) {
-					// Restore the game state
-					this.deserialize(this.save.serialize()!);
+			if (this.hasSave()) {
+				const loaded = this.loadGame();
+				if (loaded) {
 					isNewGame = false;
-					lastPlayedAt = loadedState.meta.lastPlayed;
+					// Get last played time from localStorage if available
+					try {
+						const saveData = JSON.parse(localStorage.getItem('pixelsingularity_save') || '{}');
+						lastPlayedAt = saveData.lastModified || null;
+					} catch {
+						lastPlayedAt = null;
+					}
 
 					if (this.config.debug) {
 						console.log('[Game] Loaded save data');
@@ -436,8 +446,8 @@ export class Game {
 		// 5. Narrative (story triggers, dialogues)
 		this.narrative.tick(deltaTime);
 
-		// 6. TODO: Automation
-		// this.automation.tick(deltaTime);
+		// 6. Auto-clicker (from upgrades)
+		this.processAutoClicks(deltaTime);
 
 		// 7. Achievement checks
 		this.achievements.tick(deltaTime);
@@ -452,6 +462,55 @@ export class Game {
 		}
 	}
 
+	/**
+	 * Process auto-clicks based on upgrade effects.
+	 * Auto-clicker upgrades add to the auto_click_rate.
+	 *
+	 * @param deltaTime - Time since last tick in seconds
+	 */
+	private processAutoClicks(deltaTime: number): void {
+		// Check if auto-click feature is unlocked
+		if (!this.upgrades.isFeatureUnlocked('auto_click')) {
+			return;
+		}
+
+		// Get auto-click rate from passive upgrade effects
+		const autoClickRate = this.getAutoClickRate();
+		if (autoClickRate <= 0) {
+			return;
+		}
+
+		// Accumulate time
+		this.autoClickAccumulator += deltaTime;
+
+		// Calculate how many clicks should happen
+		const clickInterval = 1.0 / autoClickRate; // seconds per click
+		while (this.autoClickAccumulator >= clickInterval) {
+			this.autoClickAccumulator -= clickInterval;
+			// Perform an auto-click (with all bonuses applied)
+			this.click('pixels');
+		}
+	}
+
+	/**
+	 * Get the current auto-click rate (clicks per second).
+	 *
+	 * @returns Auto-click rate
+	 */
+	getAutoClickRate(): number {
+		// Get passive effects with bonusId 'auto_click_rate'
+		const effects = this.upgrades.getActiveEffects('passive');
+		let rate = 0;
+
+		for (const { effect, level } of effects) {
+			if (effect.type === 'passive' && effect.bonusId === 'auto_click_rate') {
+				rate += Number(effect.value) * level;
+			}
+		}
+
+		return rate;
+	}
+
 	// ============================================================================
 	// Save/Load
 	// ============================================================================
@@ -461,59 +520,77 @@ export class Game {
 	 * Wrapper around SaveManager.save() for convenience.
 	 */
 	saveGame(): void {
-		// Update SaveManager's state before saving
-		const currentState = this.save.getState();
-		if (currentState) {
-			// Update run state
-			currentState.run.runTime = this.runTime;
-			currentState.run.currentPhase = this.phases.currentPhase;
-			currentState.run.highestPhase = Math.max(currentState.run.highestPhase || 1, this.phases.currentPhase);
-
-			// Let managers serialize their own state
+		try {
+			// Serialize the complete game state from all managers
 			const serialized = this.serialize();
-			if (serialized && typeof serialized === 'object' && 'run' in serialized) {
-				const runData = serialized.run as any;
-				if (runData.resources) currentState.run.resources = runData.resources;
-				if (runData.producers) {
-					// ProducerManager serializes to a different format, we need to adapt
-					// For now, skip producer state in SaveManager
-				}
+
+			// Wrap with metadata for save format
+			const saveData = {
+				state: serialized,
+				formatVersion: 1,
+				lastModified: Date.now()
+			};
+
+			// Save directly to localStorage
+			const saveKey = 'pixelsingularity_save';
+			const saveString = JSON.stringify(saveData);
+
+			// Create backup of previous save
+			const existingSave = localStorage.getItem(saveKey);
+			if (existingSave) {
+				localStorage.setItem(`${saveKey}_backup`, existingSave);
 			}
 
-			this.save.setState(currentState);
-		}
+			localStorage.setItem(saveKey, saveString);
 
-		// Trigger save
-		this.save.save({ isAutoSave: false, force: true });
+			if (this.config.debug) {
+				console.log('[Game] Save successful, size:', saveString.length);
+			}
+		} catch (error) {
+			console.error('[Game] Save failed:', error);
+		}
 	}
 
 	/**
 	 * Load the game state from localStorage.
-	 * Wrapper around SaveManager.load() for convenience.
 	 *
 	 * @returns Whether load was successful
 	 */
 	loadGame(): boolean {
-		const state = this.save.load();
-		if (!state) {
+		try {
+			const saveKey = 'pixelsingularity_save';
+			const saveString = localStorage.getItem(saveKey);
+
+			if (!saveString) {
+				return false;
+			}
+
+			const saveData = JSON.parse(saveString);
+
+			if (saveData?.state) {
+				this.deserialize(saveData.state);
+
+				if (this.config.debug) {
+					console.log('[Game] Load successful');
+				}
+				return true;
+			}
+
+			return false;
+		} catch (error) {
+			console.error('[Game] Load failed:', error);
 			return false;
 		}
-
-		// Deserialize the state
-		const serialized = this.save.serialize();
-		if (serialized) {
-			this.deserialize(serialized);
-		}
-
-		return true;
 	}
 
 	/**
 	 * Delete the save data.
-	 * Wrapper around SaveManager.deleteSave() for convenience.
 	 */
 	deleteSave(): void {
-		this.save.deleteSave();
+		const saveKey = 'pixelsingularity_save';
+		localStorage.removeItem(saveKey);
+		localStorage.removeItem(`${saveKey}_backup`);
+
 		if (this.config.debug) {
 			console.log('[Game] Save deleted');
 		}
@@ -521,12 +598,11 @@ export class Game {
 
 	/**
 	 * Check if save data exists.
-	 * Wrapper around SaveManager.hasSave() for convenience.
 	 *
 	 * @returns Whether save data exists
 	 */
 	hasSave(): boolean {
-		return this.save.hasSave();
+		return localStorage.getItem('pixelsingularity_save') !== null;
 	}
 
 	/**
@@ -693,22 +769,32 @@ export class Game {
 
 	/**
 	 * Perform a click action on a resource.
-	 * Includes base click amount plus any click power from producers.
+	 * Applies bonuses in correct order: (base + additive) * multiplicative.
 	 *
 	 * @param resourceId - Resource to click
 	 * @returns Total amount generated
 	 */
-	click(resourceId: string = 'pixels'): typeof ONE {
-		// Base click from resource definition
-		const baseAmount = this.resources.click(resourceId);
+	click(resourceId: string = 'pixels'): Decimal {
+		// Base click amount (usually 1)
+		const baseAmount = ONE;
+
+		// Get upgrade click bonuses (additive and multiplicative separately)
+		const { additive, multiplicative } = this.upgrades.getClickBonusComponents();
 
 		// Add click power from producers (click boosters)
-		const clickPower = this.producers.getClickPower();
-		if (clickPower.gt(0)) {
-			this.resources.addFromClick(resourceId, clickPower);
-		}
+		const producerClickPower = this.producers.getClickPower();
 
-		return baseAmount.add(clickPower);
+		// Calculate total: (base + additive + producer) * multiplicative
+		// This ensures additive bonuses benefit from multiplicative bonuses
+		let totalBeforeMultiplier = baseAmount.add(additive).add(producerClickPower);
+
+		// Apply multiplicative bonuses last
+		const clickAmount = mul(totalBeforeMultiplier, multiplicative);
+
+		// Add the full click amount to resources
+		this.resources.add(resourceId, clickAmount);
+
+		return clickAmount;
 	}
 
 	/**

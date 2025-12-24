@@ -1126,8 +1126,9 @@ export class UpgradeManager implements Manager {
 
 	/**
 	 * Calculate total click bonus.
+	 * Returns { additive, multiplicative } so Game.click() can apply in correct order.
 	 *
-	 * @returns Combined click bonus
+	 * @returns Object with additive and multiplicative bonuses
 	 */
 	private calculateTotalClickBonus(): Decimal {
 		let additive = ZERO;
@@ -1138,15 +1139,45 @@ export class UpgradeManager implements Manager {
 			if (effect.type !== 'click') continue;
 
 			let value = D(effect.value);
-			// Could scale with level
 
+			// Scale with level for repeatable upgrades
 			if (effect.mode === 'additive') {
-				additive = add(additive, value);
+				// Additive bonuses stack per level (e.g., +1 per level = +10 at level 10)
+				additive = add(additive, mul(value, level));
 			} else {
-				multiplicative = mul(multiplicative, value);
+				// Multiplicative bonuses compound per level (e.g., 1.5^level)
+				multiplicative = mul(multiplicative, pow(value, level));
 			}
 		}
 
-		return add(mul(ONE, multiplicative), additive);
+		// Correct order: (base + additive) * multiplicative
+		// Return the total multiplier to apply to base click (which is 1)
+		// So: base(1) + additive, then * multiplicative
+		return mul(add(ONE, additive), multiplicative);
+	}
+
+	/**
+	 * Get click bonus components separately for proper application order.
+	 *
+	 * @returns Object with additive and multiplicative components
+	 */
+	getClickBonusComponents(): { additive: Decimal; multiplicative: Decimal } {
+		let additive = ZERO;
+		let multiplicative = ONE;
+
+		const effects = this.getActiveEffects('click');
+		for (const { effect, level } of effects) {
+			if (effect.type !== 'click') continue;
+
+			let value = D(effect.value);
+
+			if (effect.mode === 'additive') {
+				additive = add(additive, mul(value, level));
+			} else {
+				multiplicative = mul(multiplicative, pow(value, level));
+			}
+		}
+
+		return { additive, multiplicative };
 	}
 }

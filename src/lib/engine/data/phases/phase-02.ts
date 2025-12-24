@@ -28,10 +28,7 @@ export const PHASE_02: PhaseDefinition = {
 	backgroundColor: '#0a0a0a',
 	unlockConditions: [Conditions.phase(1, true)],
 	transitionConditions: [
-		Conditions.and(
-			Conditions.resource(ResourceId.PIXELS, 4096),
-			Conditions.resource(ResourceId.CANVAS, 1)
-		)
+		Conditions.resource(ResourceId.CANVAS, 1)
 	],
 	autoTransition: false,
 	transitionIn: {
