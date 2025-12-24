@@ -7,6 +7,7 @@
  * - ResourceManager: Resource amounts and production
  * - ProducerManager: Producers/buildings and production pipeline
  * - PhaseManager: 20-phase progression system
+ * - NarrativeManager: Story, logs, dialogues, and choices
  * - GameLoop: Timing and updates
  *
  * Note: This file uses .svelte.ts extension to enable runes in non-component files.
@@ -19,9 +20,11 @@ import { GameLoop, type LoopStats } from './GameLoop';
 import { ResourceManager } from '../systems/ResourceManager.svelte';
 import { ProducerManager } from '../systems/ProducerManager.svelte';
 import { PhaseManager, type PhaseManagerContext } from '../systems/PhaseManager.svelte';
+import { NarrativeManager, type NarrativeContext } from '../systems/NarrativeManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
 import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
+import { registerStoryForPhases } from '../data/story';
 import { D, ZERO, ONE } from '../utils/decimal';
 
 /**
@@ -71,6 +74,11 @@ export class Game {
 	 * Phase manager for handling the 20-phase progression.
 	 */
 	readonly phases: PhaseManager;
+
+	/**
+	 * Narrative manager for story, logs, dialogues, and choices.
+	 */
+	readonly narrative: NarrativeManager;
 
 	/**
 	 * Game loop for timing and updates.
@@ -174,7 +182,10 @@ export class Game {
 		const phaseDefinitions = getPhaseDefinitionsMap();
 		this.phases = new PhaseManager(this.events, phaseDefinitions);
 
-		// 5. GameLoop (starts the heartbeat)
+		// 5. NarrativeManager (story, logs, dialogues)
+		this.narrative = new NarrativeManager(this.events);
+
+		// 6. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -212,12 +223,19 @@ export class Game {
 			this.resources.init();
 			this.producers.init();
 			this.phases.init();
+			this.narrative.init();
 
 			// Set up PhaseManager context for condition evaluation
 			this.phases.setContext(this.createPhaseContext());
 
+			// Set up NarrativeManager context for condition evaluation
+			this.narrative.setContext(this.createNarrativeContext());
+
 			// Sync resource manager with initial phase
 			this.resources.setPhase(this.phases.currentPhase);
+
+			// Load story content for initial phases (async, don't block)
+			this.loadStoryForCurrentPhase();
 
 			// TODO: Load save data
 			// const saveData = this.loadSave();
@@ -327,11 +345,11 @@ export class Game {
 		// 3. Phase checks (transitions, conditions)
 		this.phases.tick(deltaTime);
 
-		// 4. TODO: Automation
-		// this.automation.tick(deltaTime);
+		// 4. Narrative (story triggers, dialogues)
+		this.narrative.tick(deltaTime);
 
-		// 5. TODO: Story triggers
-		// this.story.tick(deltaTime);
+		// 5. TODO: Automation
+		// this.automation.tick(deltaTime);
 
 		// 6. TODO: Achievement checks
 		// this.achievements.tick(deltaTime);
@@ -431,7 +449,8 @@ export class Game {
 				runTime: this.runTime,
 				resources: this.resources.serialize(),
 				producers: this.producers.serialize(),
-				phases: this.phases.serialize()
+				phases: this.phases.serialize(),
+				narrative: this.narrative.serialize()
 			},
 			eternal: {
 				// TODO: Add eternal state
@@ -453,6 +472,7 @@ export class Game {
 				resources?: unknown;
 				producers?: unknown;
 				phases?: unknown;
+				narrative?: unknown;
 			};
 			eternal?: unknown;
 		};
@@ -474,6 +494,9 @@ export class Game {
 				this.phases.deserialize(save.run.phases);
 				// Sync resource manager with restored phase
 				this.resources.setPhase(this.phases.currentPhase);
+			}
+			if (save.run.narrative) {
+				this.narrative.deserialize(save.run.narrative);
 			}
 		}
 
@@ -655,13 +678,82 @@ export class Game {
 			},
 			getChoiceValue: (choiceId: string) => {
 				// First check current phase choices
-				const choice = this.phases.getChoice(choiceId);
-				if (choice !== undefined) return choice;
+				const phaseChoice = this.phases.getChoice(choiceId);
+				if (phaseChoice !== undefined) return phaseChoice;
 
-				// TODO: Check story manager for permanent choices
-				return undefined;
+				// Check narrative manager for story choices
+				return this.narrative.getChoice(choiceId);
 			}
 		};
+	}
+
+	/**
+	 * Create the context object for NarrativeManager condition evaluation.
+	 * This connects the NarrativeManager to other managers for condition checks.
+	 *
+	 * @returns NarrativeContext object
+	 */
+	private createNarrativeContext(): NarrativeContext {
+		return {
+			getResourceAmount: (resourceId: string) => {
+				return this.resources.getAmount(resourceId);
+			},
+			getCurrentPhase: () => {
+				return this.phases.currentPhase;
+			},
+			getRunTime: () => {
+				return this.runTime;
+			},
+			getProducerCount: (producerId: string) => {
+				return this.producers.getLevel(producerId);
+			},
+			hasUpgrade: (upgradeId: string) => {
+				// TODO: Connect to UpgradeManager when implemented
+				return false;
+			},
+			getUpgradeLevel: (upgradeId: string) => {
+				// TODO: Connect to UpgradeManager when implemented
+				return 0;
+			},
+			hasAchievement: (achievementId: string) => {
+				// TODO: Connect to AchievementManager when implemented
+				return false;
+			}
+		};
+	}
+
+	/**
+	 * Load story content for current phase and next phase.
+	 * Called on init and on phase transitions.
+	 */
+	private async loadStoryForCurrentPhase(): Promise<void> {
+		const currentPhase = this.phases.currentPhase;
+		const phasesToLoad = [currentPhase];
+
+		// Also preload next phase if not at the end
+		if (currentPhase < 20) {
+			phasesToLoad.push(currentPhase + 1);
+		}
+
+		try {
+			await registerStoryForPhases(this.narrative, phasesToLoad);
+
+			if (this.config.debug) {
+				console.log(`[Game] Loaded story for phases: ${phasesToLoad.join(', ')}`);
+			}
+		} catch (error) {
+			console.warn('[Game] Failed to load story content:', error);
+		}
+
+		// Subscribe to phase changes to load next phase story
+		this.events.on('phase_entered', async ({ newPhase }) => {
+			// Load story for new phase and next
+			const phases = [newPhase];
+			if (newPhase < 20) {
+				phases.push(newPhase + 1);
+			}
+			await registerStoryForPhases(this.narrative, phases);
+		});
 	}
 
 	// ============================================================================

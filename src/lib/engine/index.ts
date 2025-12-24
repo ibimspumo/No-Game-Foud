@@ -37,6 +37,7 @@ export {
 	type MultiplierStackingType,
 	type ProductionBreakdown
 } from './systems/ProductionPipeline';
+export { NarrativeManager, type NarrativeContext } from './systems/NarrativeManager.svelte';
 
 // ============================================================================
 // Models & Types
@@ -75,6 +76,13 @@ export type {
 	UpgradePurchasedEvent,
 	AchievementUnlockedEvent,
 	StoryTriggeredEvent,
+	StoryCompletedEvent,
+	LogAddedEvent,
+	DialogueStartedEvent,
+	DialogueAdvancedEvent,
+	ChoiceMadeEvent,
+	FlagSetEvent,
+	EndingUnlockedEvent,
 	RebirthStartedEvent,
 	RebirthCompletedEvent,
 	OfflineGainsCalculatedEvent,
@@ -82,6 +90,32 @@ export type {
 	ProducerUnlockedEvent,
 	MultiplierChangedEvent
 } from './models/events';
+
+// Narrative Models
+export type {
+	LogEntry,
+	LogDefinition,
+	LogCategory,
+	Dialogue,
+	DialogueLine,
+	DialogueDefinition,
+	Choice,
+	Consequence,
+	ConsequenceType,
+	ConsequencePayload,
+	StoryEvent,
+	StoryEventType,
+	StoryCondition,
+	StoryTriggerType,
+	ActiveDialogueState,
+	SerializedNarrativeState,
+	SpeakerId,
+	SpeakerStyle,
+	StoryPath,
+	EndingId,
+	Ending
+} from './models/narrative';
+export { SPEAKER_STYLES } from './models/narrative';
 
 export type {
 	ResourceDefinition,
@@ -156,6 +190,20 @@ export {
 	getMetaPhases,
 	getEstimatedGameDuration
 } from './data/phases';
+
+// Story Data
+export {
+	loadPhaseStory,
+	preloadPhaseStories,
+	registerStoryForPhases,
+	getCachedPhaseStory,
+	isPhaseStoryCached,
+	clearStoryCache,
+	getAllCachedLogs,
+	getAllCachedDialogues,
+	getAllCachedEvents,
+	type PhaseStoryData
+} from './data/story';
 
 // ============================================================================
 // Utilities

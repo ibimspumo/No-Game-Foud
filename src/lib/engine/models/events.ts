@@ -281,7 +281,7 @@ export interface StoryTriggeredEvent {
 	/** Story event identifier */
 	storyId: string;
 	/** Type of story content */
-	type: 'log' | 'dialogue' | 'choice' | 'revelation';
+	type: 'log' | 'dialogue' | 'choice' | 'revelation' | 'cutscene';
 	/** Whether this interrupts gameplay */
 	pausesGame: boolean;
 }
@@ -294,6 +294,82 @@ export interface StoryCompletedEvent {
 	storyId: string;
 	/** Choice made (if applicable) */
 	choiceMade?: string;
+}
+
+/**
+ * Emitted when a log is added to the narrative.
+ */
+export interface LogAddedEvent {
+	/** Log identifier */
+	logId: string;
+	/** Log text content */
+	text: string;
+	/** Log category */
+	category: 'thought' | 'discovery' | 'warning' | 'revelation' | 'memory';
+	/** Phase when logged */
+	phase: number;
+}
+
+/**
+ * Emitted when a dialogue starts.
+ */
+export interface DialogueStartedEvent {
+	/** Dialogue identifier */
+	dialogueId: string;
+	/** Speaker identifier */
+	speaker: string;
+	/** Number of lines in the dialogue */
+	lineCount: number;
+	/** Whether the dialogue has choices */
+	hasChoices: boolean;
+}
+
+/**
+ * Emitted when a dialogue line advances.
+ */
+export interface DialogueAdvancedEvent {
+	/** Dialogue identifier */
+	dialogueId: string;
+	/** Current line index */
+	lineIndex: number;
+	/** Total lines */
+	totalLines: number;
+}
+
+/**
+ * Emitted when a player makes a story choice.
+ */
+export interface ChoiceMadeEvent {
+	/** Choice identifier */
+	choiceId: string;
+	/** Selected option label */
+	selectedOption: string;
+	/** Story path affected */
+	pathAffected: 'peaceful' | 'consuming' | 'neutral' | 'none';
+}
+
+/**
+ * Emitted when a story flag is set.
+ */
+export interface FlagSetEvent {
+	/** Flag key */
+	key: string;
+	/** Flag value */
+	value: boolean | string | number;
+	/** Source of the flag */
+	source: 'choice' | 'event' | 'achievement' | 'manual';
+}
+
+/**
+ * Emitted when an ending is unlocked.
+ */
+export interface EndingUnlockedEvent {
+	/** Ending identifier */
+	endingId: string;
+	/** Ending display name */
+	name: string;
+	/** Story path that led to this ending */
+	path: 'peaceful' | 'consuming' | 'neutral';
 }
 
 // ============================================================================
@@ -381,9 +457,15 @@ export interface GameEventMap {
 	// Achievements
 	achievement_unlocked: AchievementUnlockedEvent;
 
-	// Story
+	// Story/Narrative
 	story_triggered: StoryTriggeredEvent;
 	story_completed: StoryCompletedEvent;
+	log_added: LogAddedEvent;
+	dialogue_started: DialogueStartedEvent;
+	dialogue_advanced: DialogueAdvancedEvent;
+	choice_made: ChoiceMadeEvent;
+	flag_set: FlagSetEvent;
+	ending_unlocked: EndingUnlockedEvent;
 
 	// Rebirth
 	rebirth_started: RebirthStartedEvent;
