@@ -6,6 +6,7 @@
  * - EventManager: Pub/Sub communication
  * - ResourceManager: Resource amounts and production
  * - ProducerManager: Producers/buildings and production pipeline
+ * - PhaseManager: 20-phase progression system
  * - GameLoop: Timing and updates
  *
  * Note: This file uses .svelte.ts extension to enable runes in non-component files.
@@ -17,7 +18,10 @@ import { EventManager } from './EventManager';
 import { GameLoop, type LoopStats } from './GameLoop';
 import { ResourceManager } from '../systems/ResourceManager.svelte';
 import { ProducerManager } from '../systems/ProducerManager.svelte';
+import { PhaseManager, type PhaseManagerContext } from '../systems/PhaseManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
+import { type VisualMode } from '../models/phase';
+import { getPhaseDefinitionsMap } from '../data/phases';
 import { D, ZERO, ONE } from '../utils/decimal';
 
 /**
@@ -64,6 +68,11 @@ export class Game {
 	readonly producers: ProducerManager;
 
 	/**
+	 * Phase manager for handling the 20-phase progression.
+	 */
+	readonly phases: PhaseManager;
+
+	/**
 	 * Game loop for timing and updates.
 	 */
 	private readonly loop: GameLoop;
@@ -87,14 +96,37 @@ export class Game {
 	status = $state<GameStatus>('uninitialized');
 
 	/**
-	 * Current game phase (1-20).
-	 */
-	currentPhase = $state(1);
-
-	/**
 	 * Total time played in this run (seconds).
 	 */
 	runTime = $state(0);
+
+	/**
+	 * Derived: Current game phase (1-20) from PhaseManager.
+	 */
+	get currentPhase(): number {
+		return this.phases.currentPhase;
+	}
+
+	/**
+	 * Derived: Current visual mode from PhaseManager.
+	 */
+	get visualMode(): VisualMode {
+		return this.phases.visualMode;
+	}
+
+	/**
+	 * Derived: Whether transition to next phase is possible.
+	 */
+	get canAdvancePhase(): boolean {
+		return this.phases.canAdvance;
+	}
+
+	/**
+	 * Derived: Progress towards next phase (0-1).
+	 */
+	get phaseProgress(): number {
+		return this.phases.transitionProgress;
+	}
 
 	/**
 	 * Total ticks since game start.
@@ -138,7 +170,11 @@ export class Game {
 		// 3. ProducerManager (producers and production pipeline)
 		this.producers = new ProducerManager(this.events, this.resources);
 
-		// 4. GameLoop (starts the heartbeat)
+		// 4. PhaseManager (20-phase progression)
+		const phaseDefinitions = getPhaseDefinitionsMap();
+		this.phases = new PhaseManager(this.events, phaseDefinitions);
+
+		// 5. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -175,6 +211,13 @@ export class Game {
 			// Initialize all managers
 			this.resources.init();
 			this.producers.init();
+			this.phases.init();
+
+			// Set up PhaseManager context for condition evaluation
+			this.phases.setContext(this.createPhaseContext());
+
+			// Sync resource manager with initial phase
+			this.resources.setPhase(this.phases.currentPhase);
 
 			// TODO: Load save data
 			// const saveData = this.loadSave();
@@ -281,8 +324,8 @@ export class Game {
 		// 2. Producers (buildings and production pipeline)
 		this.producers.tick(deltaTime);
 
-		// 3. TODO: Phase checks
-		// this.phases.tick(deltaTime);
+		// 3. Phase checks (transitions, conditions)
+		this.phases.tick(deltaTime);
 
 		// 4. TODO: Automation
 		// this.automation.tick(deltaTime);
@@ -385,10 +428,10 @@ export class Game {
 			version: this.config.version,
 			savedAt: Date.now(),
 			run: {
-				currentPhase: this.currentPhase,
 				runTime: this.runTime,
 				resources: this.resources.serialize(),
-				producers: this.producers.serialize()
+				producers: this.producers.serialize(),
+				phases: this.phases.serialize()
 			},
 			eternal: {
 				// TODO: Add eternal state
@@ -406,10 +449,10 @@ export class Game {
 			version?: string;
 			savedAt?: number;
 			run?: {
-				currentPhase?: number;
 				runTime?: number;
 				resources?: unknown;
 				producers?: unknown;
+				phases?: unknown;
 			};
 			eternal?: unknown;
 		};
@@ -418,9 +461,6 @@ export class Game {
 
 		// Restore run state
 		if (save.run) {
-			if (typeof save.run.currentPhase === 'number') {
-				this.currentPhase = save.run.currentPhase;
-			}
 			if (typeof save.run.runTime === 'number') {
 				this.runTime = save.run.runTime;
 			}
@@ -429,6 +469,11 @@ export class Game {
 			}
 			if (save.run.producers) {
 				this.producers.deserialize(save.run.producers);
+			}
+			if (save.run.phases) {
+				this.phases.deserialize(save.run.phases);
+				// Sync resource manager with restored phase
+				this.resources.setPhase(this.phases.currentPhase);
 			}
 		}
 
@@ -559,6 +604,64 @@ export class Game {
 		if (typeof window !== 'undefined') {
 			window.location.reload();
 		}
+	}
+
+	/**
+	 * Advance to the next phase.
+	 * Only works if transition conditions are met.
+	 *
+	 * @returns Promise that resolves to true if transition succeeded
+	 */
+	async advancePhase(): Promise<boolean> {
+		const success = await this.phases.advancePhase();
+
+		if (success) {
+			// Sync resource manager with new phase
+			this.resources.setPhase(this.phases.currentPhase);
+		}
+
+		return success;
+	}
+
+	// ============================================================================
+	// Phase Context Provider
+	// ============================================================================
+
+	/**
+	 * Create the context object for PhaseManager condition evaluation.
+	 * This connects the PhaseManager to other managers for condition checks.
+	 *
+	 * @returns PhaseManagerContext object
+	 */
+	private createPhaseContext(): PhaseManagerContext {
+		return {
+			getResourceAmount: (resourceId: string) => {
+				return this.resources.getAmount(resourceId);
+			},
+			getProducerCount: (producerId: string) => {
+				return this.producers.getLevel(producerId);
+			},
+			hasUpgrade: (upgradeId: string) => {
+				// TODO: Connect to UpgradeManager when implemented
+				return false;
+			},
+			getUpgradeLevel: (upgradeId: string) => {
+				// TODO: Connect to UpgradeManager when implemented
+				return 0;
+			},
+			hasAchievement: (achievementId: string) => {
+				// TODO: Connect to AchievementManager when implemented
+				return false;
+			},
+			getChoiceValue: (choiceId: string) => {
+				// First check current phase choices
+				const choice = this.phases.getChoice(choiceId);
+				if (choice !== undefined) return choice;
+
+				// TODO: Check story manager for permanent choices
+				return undefined;
+			}
+		};
 	}
 
 	// ============================================================================

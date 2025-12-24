@@ -18,6 +18,18 @@ export { GameLoop, type LoopState, type LoopStats, type TickCallback } from './c
 export { ResourceManager } from './systems/ResourceManager.svelte';
 export { ProducerManager } from './systems/ProducerManager.svelte';
 export {
+	PhaseManager,
+	type PhaseManagerContext,
+	type TransitionCallback
+} from './systems/PhaseManager.svelte';
+export {
+	ConditionEvaluator,
+	Conditions,
+	createConditionEvaluator,
+	type EvaluationContext,
+	type EvaluationResult
+} from './systems/ConditionEvaluator';
+export {
 	ProductionPipeline,
 	type Multiplier,
 	type MultiplierInput,
@@ -100,6 +112,50 @@ export {
 	getProducersForPhase,
 	isProducerVisibleAtPhase
 } from './models/producers';
+
+export type {
+	PhaseDefinition,
+	PhaseProgress,
+	PhaseManagerState,
+	TransitionState,
+	TransitionConfig,
+	GridConfig,
+	Condition as PhaseCondition,
+	ResourceCondition,
+	TimeCondition,
+	ChoiceCondition,
+	PhaseCondition as PhaseNumberCondition,
+	ProducerCondition,
+	UpgradeCondition,
+	AchievementCondition,
+	AndCondition,
+	OrCondition,
+	NotCondition,
+	VisualMode,
+	PhaseType,
+	PhaseIdType
+} from './models/phase';
+export {
+	PhaseId,
+	ABSTRACT_MODE_START_PHASE,
+	TOTAL_PHASES,
+	createDefaultPhaseProgress,
+	createDefaultPhaseManagerState
+} from './models/phase';
+
+// ============================================================================
+// Data Definitions
+// ============================================================================
+export {
+	PHASE_DEFINITIONS,
+	getPhaseDefinition,
+	getPhaseDefinitionsMap,
+	getPhasesByMode,
+	getBossPhases,
+	getMeditationPhases,
+	getMetaPhases,
+	getEstimatedGameDuration
+} from './data/phases';
 
 // ============================================================================
 // Utilities
