@@ -7,6 +7,7 @@
  * - SaveManager: Save/load operations and state persistence
  * - ResourceManager: Resource amounts and production
  * - ProducerManager: Producers/buildings and production pipeline
+ * - UpgradeManager: Run/eternal/secret upgrades and skill tree
  * - PhaseManager: 20-phase progression system
  * - NarrativeManager: Story, logs, dialogues, and choices
  * - GameLoop: Timing and updates
@@ -21,13 +22,15 @@ import { SaveManager } from './SaveManager';
 import { GameLoop, type LoopStats } from './GameLoop';
 import { ResourceManager } from '../systems/ResourceManager.svelte';
 import { ProducerManager } from '../systems/ProducerManager.svelte';
+import { UpgradeManager, type UpgradeManagerContext } from '../systems/UpgradeManager.svelte';
 import { PhaseManager, type PhaseManagerContext } from '../systems/PhaseManager.svelte';
 import { NarrativeManager, type NarrativeContext } from '../systems/NarrativeManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
 import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
 import { registerStoryForPhases } from '../data/story';
-import { D, ZERO, ONE } from '../utils/decimal';
+import { getInitialUpgrades, getNewUpgradesForPhase } from '../data/upgrades';
+import { D, ZERO, ONE, mul } from '../utils/decimal';
 import { calculateOfflineProgressWithBreakdown } from '../utils/OfflineProgress';
 
 /**
@@ -82,6 +85,11 @@ export class Game {
 	 * Phase manager for handling the 20-phase progression.
 	 */
 	readonly phases: PhaseManager;
+
+	/**
+	 * Upgrade manager for run/eternal/secret upgrades.
+	 */
+	readonly upgrades: UpgradeManager;
 
 	/**
 	 * Narrative manager for story, logs, dialogues, and choices.
@@ -189,14 +197,17 @@ export class Game {
 		// 4. ProducerManager (producers and production pipeline)
 		this.producers = new ProducerManager(this.events, this.resources);
 
-		// 5. PhaseManager (20-phase progression)
+		// 5. UpgradeManager (run/eternal/secret upgrades)
+		this.upgrades = new UpgradeManager(this.events, this.resources);
+
+		// 6. PhaseManager (20-phase progression)
 		const phaseDefinitions = getPhaseDefinitionsMap();
 		this.phases = new PhaseManager(this.events, phaseDefinitions);
 
-		// 6. NarrativeManager (story, logs, dialogues)
+		// 7. NarrativeManager (story, logs, dialogues)
 		this.narrative = new NarrativeManager(this.events);
 
-		// 7. GameLoop (starts the heartbeat)
+		// 8. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -213,6 +224,7 @@ export class Game {
 		// Set up event listeners to mark save as dirty
 		this.events.on('resource_changed', () => this.save.markDirty());
 		this.events.on('producer_purchased', () => this.save.markDirty());
+		this.events.on('upgrade_purchased', () => this.save.markDirty());
 	}
 
 	// ============================================================================
@@ -237,9 +249,19 @@ export class Game {
 			// Initialize all managers
 			this.resources.init();
 			this.producers.init();
+			this.upgrades.init();
 			this.phases.init();
 			this.narrative.init();
 			this.save.init();
+
+			// Register initial upgrades (run + eternal + secret)
+			const initialUpgrades = getInitialUpgrades();
+			for (const upgrade of initialUpgrades) {
+				this.upgrades.registerUpgrade(upgrade);
+			}
+
+			// Set up UpgradeManager context for condition evaluation
+			this.upgrades.setContext(this.createUpgradeContext());
 
 			// Set up PhaseManager context for condition evaluation
 			this.phases.setContext(this.createPhaseContext());
@@ -392,16 +414,19 @@ export class Game {
 		// 2. Producers (buildings and production pipeline)
 		this.producers.tick(deltaTime);
 
-		// 3. Phase checks (transitions, conditions)
+		// 3. Upgrades (apply passive effects, check conditions)
+		this.upgrades.tick(deltaTime);
+
+		// 4. Phase checks (transitions, conditions)
 		this.phases.tick(deltaTime);
 
-		// 4. Narrative (story triggers, dialogues)
+		// 5. Narrative (story triggers, dialogues)
 		this.narrative.tick(deltaTime);
 
-		// 5. TODO: Automation
+		// 6. TODO: Automation
 		// this.automation.tick(deltaTime);
 
-		// 6. TODO: Achievement checks
+		// 7. TODO: Achievement checks
 		// this.achievements.tick(deltaTime);
 
 		// Emit tick event (for debugging/stats)
@@ -497,6 +522,7 @@ export class Game {
 	 * @returns Serialized game state
 	 */
 	private serialize(): object {
+		const upgradeState = this.upgrades.serialize();
 		return {
 			version: this.config.version,
 			savedAt: Date.now(),
@@ -504,12 +530,15 @@ export class Game {
 				runTime: this.runTime,
 				resources: this.resources.serialize(),
 				producers: this.producers.serialize(),
+				upgrades: upgradeState.runLevels,
 				phases: this.phases.serialize(),
 				narrative: this.narrative.serialize()
 			},
 			eternal: {
-				// TODO: Add eternal state
-			}
+				upgrades: upgradeState.eternalLevels
+			},
+			// Full upgrade state for complete restoration
+			upgradeState
 		};
 	}
 
@@ -526,10 +555,21 @@ export class Game {
 				runTime?: number;
 				resources?: unknown;
 				producers?: unknown;
+				upgrades?: Record<string, number>;
 				phases?: unknown;
 				narrative?: unknown;
 			};
-			eternal?: unknown;
+			eternal?: {
+				upgrades?: Record<string, number>;
+			};
+			upgradeState?: {
+				runLevels?: Record<string, number>;
+				eternalLevels?: Record<string, number>;
+				secretLevels?: Record<string, number>;
+				unlocked?: string[];
+				totalSpent?: Record<string, string>;
+				firstPurchaseTimes?: Record<string, number>;
+			};
 		};
 
 		if (!save || typeof save !== 'object') return;
@@ -555,7 +595,21 @@ export class Game {
 			}
 		}
 
-		// TODO: Restore eternal state
+		// Restore upgrade state
+		if (save.upgradeState) {
+			// Use full upgrade state if available
+			this.upgrades.deserialize(save.upgradeState);
+		} else if (save.run?.upgrades || save.eternal?.upgrades) {
+			// Fall back to separate run/eternal for backwards compatibility
+			this.upgrades.deserialize({
+				runLevels: save.run?.upgrades || {},
+				eternalLevels: save.eternal?.upgrades || {},
+				secretLevels: {},
+				unlocked: [],
+				totalSpent: {},
+				firstPurchaseTimes: {}
+			});
+		}
 	}
 
 	// ============================================================================
@@ -670,6 +724,27 @@ export class Game {
 	// ============================================================================
 
 	/**
+	 * Create the context object for UpgradeManager condition evaluation.
+	 * This connects the UpgradeManager to other managers for condition checks.
+	 *
+	 * @returns UpgradeManagerContext object
+	 */
+	private createUpgradeContext(): UpgradeManagerContext {
+		return {
+			getCurrentPhase: () => {
+				return this.phases.currentPhase;
+			},
+			hasAchievement: (achievementId: string) => {
+				// TODO: Connect to AchievementManager when implemented
+				return false;
+			},
+			getProducerLevel: (producerId: string) => {
+				return this.producers.getLevel(producerId);
+			}
+		};
+	}
+
+	/**
 	 * Create the context object for PhaseManager condition evaluation.
 	 * This connects the PhaseManager to other managers for condition checks.
 	 *
@@ -684,12 +759,10 @@ export class Game {
 				return this.producers.getLevel(producerId);
 			},
 			hasUpgrade: (upgradeId: string) => {
-				// TODO: Connect to UpgradeManager when implemented
-				return false;
+				return this.upgrades.getLevel(upgradeId) > 0;
 			},
 			getUpgradeLevel: (upgradeId: string) => {
-				// TODO: Connect to UpgradeManager when implemented
-				return 0;
+				return this.upgrades.getLevel(upgradeId);
 			},
 			hasAchievement: (achievementId: string) => {
 				// TODO: Connect to AchievementManager when implemented
@@ -727,12 +800,10 @@ export class Game {
 				return this.producers.getLevel(producerId);
 			},
 			hasUpgrade: (upgradeId: string) => {
-				// TODO: Connect to UpgradeManager when implemented
-				return false;
+				return this.upgrades.getLevel(upgradeId) > 0;
 			},
 			getUpgradeLevel: (upgradeId: string) => {
-				// TODO: Connect to UpgradeManager when implemented
-				return 0;
+				return this.upgrades.getLevel(upgradeId);
 			},
 			hasAchievement: (achievementId: string) => {
 				// TODO: Connect to AchievementManager when implemented

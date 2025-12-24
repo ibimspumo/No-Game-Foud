@@ -50,6 +50,12 @@ export {
 	type ProductionBreakdown
 } from './systems/ProductionPipeline';
 export { NarrativeManager, type NarrativeContext } from './systems/NarrativeManager.svelte';
+export {
+	UpgradeManager,
+	type UpgradeManagerContext,
+	type BuyOptions,
+	type PurchaseResult
+} from './systems/UpgradeManager.svelte';
 
 // ============================================================================
 // Models & Types
@@ -192,6 +198,20 @@ export {
 	createDefaultPhaseManagerState
 } from './models/phase';
 
+// Upgrade Models
+export type {
+	UpgradeDefinition,
+	UpgradeEffect,
+	UpgradeCategory,
+	UpgradeCurrency,
+	UpgradeEffectType,
+	SkillTreePath,
+	UpgradeUnlockCondition,
+	InternalUpgradeState,
+	SerializedUpgrades
+} from './models/upgrades';
+export { UpgradeId, isAtMaxLevel, isRepeatableUpgrade } from './models/upgrades';
+
 // ============================================================================
 // Data Definitions
 // ============================================================================
@@ -219,6 +239,29 @@ export {
 	getAllCachedEvents,
 	type PhaseStoryData
 } from './data/story';
+
+// Upgrade Data
+export {
+	ALL_UPGRADES,
+	UPGRADE_MAP,
+	RUN_UPGRADES,
+	ETERNAL_UPGRADES,
+	SECRET_UPGRADES,
+	getUpgradeDefinition,
+	getUpgradesByCategory,
+	getUpgradesForPhase,
+	getInitialUpgrades,
+	getNewUpgradesForPhase,
+	getRunUpgradesForPhase,
+	getRunUpgradesUpToPhase,
+	getEternalUpgradesByPath,
+	getPathCapstone,
+	canAscend,
+	getSecretUpgrades,
+	isSecretUnlockable,
+	getSkillTreeStructure,
+	calculatePathTotalCost
+} from './data/upgrades';
 
 // ============================================================================
 // Utilities
