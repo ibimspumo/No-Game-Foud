@@ -56,6 +56,11 @@ export {
 	type BuyOptions,
 	type PurchaseResult
 } from './systems/UpgradeManager.svelte';
+export {
+	AchievementManager,
+	type AchievementContext,
+	type AchievementNotification
+} from './systems/AchievementManager.svelte';
 
 // ============================================================================
 // Models & Types
@@ -212,6 +217,28 @@ export type {
 } from './models/upgrades';
 export { UpgradeId, isAtMaxLevel, isRepeatableUpgrade } from './models/upgrades';
 
+// Achievement Models
+export type {
+	AchievementType,
+	AchievementTier,
+	AchievementReward,
+	AchievementDefinition,
+	AchievementState,
+	SerializedAchievements,
+	AchievementIdType
+} from './models/achievements';
+export {
+	AchievementId,
+	isAchievementUnlocked,
+	getAchievementTierColor,
+	formatProgress,
+	calculateProgress,
+	getTierDisplayName,
+	isAchievementVisible,
+	getAchievementDescription,
+	createDefaultAchievementState
+} from './models/achievements';
+
 // ============================================================================
 // Data Definitions
 // ============================================================================
@@ -262,6 +289,22 @@ export {
 	getSkillTreeStructure,
 	calculatePathTotalCost
 } from './data/upgrades';
+
+// Achievement Data
+export {
+	ALL_ACHIEVEMENTS,
+	ACHIEVEMENT_DEFINITIONS,
+	getAchievementDefinition,
+	getAchievementsByType,
+	getAchievementsByTier,
+	getVisibleAchievements,
+	getHiddenAchievements,
+	getTotalPossiblePP,
+	getAchievementsByCategory,
+	getRootAchievements,
+	getDependentAchievements,
+	calculateAchievementStats
+} from './data/achievements';
 
 // ============================================================================
 // Utilities

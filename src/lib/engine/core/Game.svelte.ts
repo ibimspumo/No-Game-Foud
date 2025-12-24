@@ -25,6 +25,7 @@ import { ProducerManager } from '../systems/ProducerManager.svelte';
 import { UpgradeManager, type UpgradeManagerContext } from '../systems/UpgradeManager.svelte';
 import { PhaseManager, type PhaseManagerContext } from '../systems/PhaseManager.svelte';
 import { NarrativeManager, type NarrativeContext } from '../systems/NarrativeManager.svelte';
+import { AchievementManager, type AchievementContext } from '../systems/AchievementManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
 import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
@@ -95,6 +96,11 @@ export class Game {
 	 * Narrative manager for story, logs, dialogues, and choices.
 	 */
 	readonly narrative: NarrativeManager;
+
+	/**
+	 * Achievement manager for tracking and awarding achievements.
+	 */
+	readonly achievements: AchievementManager;
 
 	/**
 	 * Game loop for timing and updates.
@@ -207,7 +213,10 @@ export class Game {
 		// 7. NarrativeManager (story, logs, dialogues)
 		this.narrative = new NarrativeManager(this.events);
 
-		// 8. GameLoop (starts the heartbeat)
+		// 8. AchievementManager (achievements and rewards)
+		this.achievements = new AchievementManager(this.events);
+
+		// 9. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -252,6 +261,7 @@ export class Game {
 			this.upgrades.init();
 			this.phases.init();
 			this.narrative.init();
+			this.achievements.init();
 			this.save.init();
 
 			// Register initial upgrades (run + eternal + secret)
@@ -268,6 +278,9 @@ export class Game {
 
 			// Set up NarrativeManager context for condition evaluation
 			this.narrative.setContext(this.createNarrativeContext());
+
+			// Set up AchievementManager context for condition evaluation
+			this.achievements.setContext(this.createAchievementContext());
 
 			// Sync resource manager with initial phase
 			this.resources.setPhase(this.phases.currentPhase);
@@ -426,8 +439,8 @@ export class Game {
 		// 6. TODO: Automation
 		// this.automation.tick(deltaTime);
 
-		// 7. TODO: Achievement checks
-		// this.achievements.tick(deltaTime);
+		// 7. Achievement checks
+		this.achievements.tick(deltaTime);
 
 		// Emit tick event (for debugging/stats)
 		if (this.config.debug && this.tickCount % 60 === 0) {
@@ -535,7 +548,8 @@ export class Game {
 				narrative: this.narrative.serialize()
 			},
 			eternal: {
-				upgrades: upgradeState.eternalLevels
+				upgrades: upgradeState.eternalLevels,
+				achievements: this.achievements.serialize()
 			},
 			// Full upgrade state for complete restoration
 			upgradeState
@@ -561,6 +575,7 @@ export class Game {
 			};
 			eternal?: {
 				upgrades?: Record<string, number>;
+				achievements?: unknown;
 			};
 			upgradeState?: {
 				runLevels?: Record<string, number>;
@@ -609,6 +624,11 @@ export class Game {
 				totalSpent: {},
 				firstPurchaseTimes: {}
 			});
+		}
+
+		// Restore achievement state (persists across rebirths)
+		if (save.eternal?.achievements) {
+			this.achievements.deserialize(save.eternal.achievements);
 		}
 	}
 
@@ -735,8 +755,7 @@ export class Game {
 				return this.phases.currentPhase;
 			},
 			hasAchievement: (achievementId: string) => {
-				// TODO: Connect to AchievementManager when implemented
-				return false;
+				return this.achievements.hasAchievement(achievementId);
 			},
 			getProducerLevel: (producerId: string) => {
 				return this.producers.getLevel(producerId);
@@ -765,8 +784,7 @@ export class Game {
 				return this.upgrades.getLevel(upgradeId);
 			},
 			hasAchievement: (achievementId: string) => {
-				// TODO: Connect to AchievementManager when implemented
-				return false;
+				return this.achievements.hasAchievement(achievementId);
 			},
 			getChoiceValue: (choiceId: string) => {
 				// First check current phase choices
@@ -806,8 +824,70 @@ export class Game {
 				return this.upgrades.getLevel(upgradeId);
 			},
 			hasAchievement: (achievementId: string) => {
-				// TODO: Connect to AchievementManager when implemented
-				return false;
+				return this.achievements.hasAchievement(achievementId);
+			}
+		};
+	}
+
+	/**
+	 * Create the context object for AchievementManager condition evaluation.
+	 * This connects the AchievementManager to other managers for condition checks.
+	 *
+	 * @returns AchievementContext object
+	 */
+	private createAchievementContext(): AchievementContext {
+		return {
+			getResourceAmount: (resourceId: string) => {
+				return this.resources.getAmount(resourceId);
+			},
+			getCurrentPhase: () => {
+				return this.phases.currentPhase;
+			},
+			isPhaseCompleted: (phaseNumber: number) => {
+				return this.phases.isPhaseCompleted(phaseNumber);
+			},
+			getRunTime: () => {
+				return this.runTime;
+			},
+			getTotalPlayTime: () => {
+				// TODO: Get from eternal state when implemented
+				return this.runTime;
+			},
+			getCurrentPhaseTime: () => {
+				return this.phases.currentPhaseTime;
+			},
+			getProducerCount: (producerId: string) => {
+				return this.producers.getLevel(producerId);
+			},
+			hasUpgrade: (upgradeId: string) => {
+				return this.upgrades.getLevel(upgradeId) > 0;
+			},
+			getUpgradeLevel: (upgradeId: string) => {
+				return this.upgrades.getLevel(upgradeId);
+			},
+			getChoiceValue: (choiceId: string) => {
+				// First check current phase choices
+				const phaseChoice = this.phases.getChoice(choiceId);
+				if (phaseChoice !== undefined) return phaseChoice;
+
+				// Check narrative manager for story choices
+				return this.narrative.getChoice(choiceId);
+			},
+			getTotalRebirths: () => {
+				// TODO: Get from eternal state when implemented
+				return 0;
+			},
+			getTotalClicks: () => {
+				// TODO: Get from statistics when implemented
+				return 0;
+			},
+			addPrimordialPixels: (amount: number) => {
+				// Add to eternal resources
+				this.resources.add('primordial', D(amount));
+			},
+			applyUnlock: (unlockId: string) => {
+				// TODO: Implement unlock system
+				console.log(`[Game] Unlock applied: ${unlockId}`);
 			}
 		};
 	}
