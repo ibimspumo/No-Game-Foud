@@ -11,6 +11,18 @@
 export { Game, type GameStatus } from './core/Game.svelte';
 export { EventManager, type SubscribeOptions } from './core/EventManager';
 export { GameLoop, type LoopState, type LoopStats, type TickCallback } from './core/GameLoop';
+export {
+	SaveManager,
+	type SerializedSaveData,
+	type SaveOptions
+} from './core/SaveManager';
+export {
+	MigrationRegistry,
+	type MigrationFunction,
+	sanitizeSaveData,
+	DEFAULT_RUN_STATE,
+	DEFAULT_ETERNAL_STATE
+} from './core/SaveMigration';
 
 // ============================================================================
 // Systems (Managers)
@@ -73,7 +85,9 @@ export type {
 	ProductionChangedEvent,
 	PhaseUnlockedEvent,
 	PhaseEnteredEvent,
+	PhaseRequirementsCheckedEvent,
 	UpgradePurchasedEvent,
+	UpgradeUnlockedEvent,
 	AchievementUnlockedEvent,
 	StoryTriggeredEvent,
 	StoryCompletedEvent,
@@ -88,7 +102,8 @@ export type {
 	OfflineGainsCalculatedEvent,
 	ProducerPurchasedEvent,
 	ProducerUnlockedEvent,
-	MultiplierChangedEvent
+	MultiplierChangedEvent,
+	AutomationTriggeredEvent
 } from './models/events';
 
 // Narrative Models
@@ -274,6 +289,15 @@ export {
 	type NotationStyle,
 	type FormatOptions
 } from './utils/format';
+
+export {
+	type OfflineProgressConfig,
+	type OfflineReward,
+	type OfflineCalculationResult,
+	DEFAULT_OFFLINE_CONFIG,
+	calculateOfflineProgress,
+	calculateOfflineProgressWithBreakdown
+} from './utils/OfflineProgress';
 
 // ============================================================================
 // Context Helpers

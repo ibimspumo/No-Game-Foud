@@ -4,6 +4,7 @@
  *
  * The Game class follows the Manager pattern, coordinating between:
  * - EventManager: Pub/Sub communication
+ * - SaveManager: Save/load operations and state persistence
  * - ResourceManager: Resource amounts and production
  * - ProducerManager: Producers/buildings and production pipeline
  * - PhaseManager: 20-phase progression system
@@ -16,6 +17,7 @@
  */
 
 import { EventManager } from './EventManager';
+import { SaveManager } from './SaveManager';
 import { GameLoop, type LoopStats } from './GameLoop';
 import { ResourceManager } from '../systems/ResourceManager.svelte';
 import { ProducerManager } from '../systems/ProducerManager.svelte';
@@ -26,6 +28,7 @@ import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
 import { registerStoryForPhases } from '../data/story';
 import { D, ZERO, ONE } from '../utils/decimal';
+import { calculateOfflineProgressWithBreakdown } from '../utils/OfflineProgress';
 
 /**
  * Game state enum for tracking overall game status.
@@ -59,6 +62,11 @@ export class Game {
 	 * Event manager for pub/sub communication between systems.
 	 */
 	readonly events: EventManager;
+
+	/**
+	 * Save manager for handling save/load operations.
+	 */
+	readonly save: SaveManager;
 
 	/**
 	 * Resource manager for handling all game resources.
@@ -151,11 +159,6 @@ export class Game {
 	 */
 	lastError = $state<string | null>(null);
 
-	/**
-	 * Auto-save timer ID.
-	 */
-	private autoSaveTimerId: ReturnType<typeof setInterval> | null = null;
-
 	// ============================================================================
 	// Constructor
 	// ============================================================================
@@ -172,20 +175,28 @@ export class Game {
 		// 1. EventManager first (others depend on it)
 		this.events = new EventManager(this.config.debug);
 
-		// 2. ResourceManager (core game state)
+		// 2. SaveManager (needs events)
+		this.save = new SaveManager(
+			this.events,
+			this.config.saveKey,
+			this.config.version,
+			this.config.autoSaveInterval
+		);
+
+		// 3. ResourceManager (core game state)
 		this.resources = new ResourceManager(this.events);
 
-		// 3. ProducerManager (producers and production pipeline)
+		// 4. ProducerManager (producers and production pipeline)
 		this.producers = new ProducerManager(this.events, this.resources);
 
-		// 4. PhaseManager (20-phase progression)
+		// 5. PhaseManager (20-phase progression)
 		const phaseDefinitions = getPhaseDefinitionsMap();
 		this.phases = new PhaseManager(this.events, phaseDefinitions);
 
-		// 5. NarrativeManager (story, logs, dialogues)
+		// 6. NarrativeManager (story, logs, dialogues)
 		this.narrative = new NarrativeManager(this.events);
 
-		// 6. GameLoop (starts the heartbeat)
+		// 7. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -198,6 +209,10 @@ export class Game {
 		);
 
 		this.debugMode = this.config.debug;
+
+		// Set up event listeners to mark save as dirty
+		this.events.on('resource_changed', () => this.save.markDirty());
+		this.events.on('producer_purchased', () => this.save.markDirty());
 	}
 
 	// ============================================================================
@@ -224,6 +239,7 @@ export class Game {
 			this.producers.init();
 			this.phases.init();
 			this.narrative.init();
+			this.save.init();
 
 			// Set up PhaseManager context for condition evaluation
 			this.phases.setContext(this.createPhaseContext());
@@ -237,24 +253,58 @@ export class Game {
 			// Load story content for initial phases (async, don't block)
 			this.loadStoryForCurrentPhase();
 
-			// TODO: Load save data
-			// const saveData = this.loadSave();
-			// if (saveData) {
-			//   this.deserialize(saveData);
-			//   this.calculateOfflineProgress();
-			// }
+			// Check for existing save and load if present
+			let isNewGame = true;
+			let lastPlayedAt: number | null = null;
+
+			if (this.save.hasSave()) {
+				const loadedState = this.save.load();
+				if (loadedState) {
+					// Restore the game state
+					this.deserialize(this.save.serialize()!);
+					isNewGame = false;
+					lastPlayedAt = loadedState.meta.lastPlayed;
+
+					if (this.config.debug) {
+						console.log('[Game] Loaded save data');
+					}
+				}
+			}
+
+			// Calculate offline progress if this is a returning player
+			if (!isNewGame && lastPlayedAt) {
+				const currentProductionRate = this.resources.getProductionRate('pixels');
+				const offlineResult = calculateOfflineProgressWithBreakdown(lastPlayedAt, currentProductionRate);
+
+				if (offlineResult.rewards.dreamPixels.gt(0)) {
+					// Apply offline gains
+					this.resources.add('pixels', offlineResult.rewards.dreamPixels);
+
+					// Emit offline gains event
+					this.events.emit('offline_gains_calculated', {
+						offlineTime: offlineResult.rewards.timeAway,
+						cappedTime: offlineResult.rewards.cappedTime,
+						efficiency: offlineResult.rewards.efficiency,
+						gains: new Map([['pixels', offlineResult.rewards.dreamPixels]])
+					});
+
+					if (this.config.debug) {
+						console.log(`[Game] Offline progress: ${offlineResult.breakdown.timeAwayFormatted} -> ${offlineResult.rewards.dreamPixels.toString()} pixels`);
+					}
+				}
+			}
 
 			// Start the game loop
 			this.loop.start();
 			this.status = 'running';
 
 			// Start auto-save timer
-			this.startAutoSave();
+			this.save.startAutoSave();
 
 			// Emit initialization event
 			this.events.emit('game_initialized', {
 				timestamp: Date.now(),
-				isNewGame: true // TODO: Set based on save data
+				isNewGame
 			});
 
 			if (this.config.debug) {
@@ -274,10 +324,10 @@ export class Game {
 	 */
 	stop(): void {
 		// Stop auto-save
-		this.stopAutoSave();
+		this.save.stopAutoSave();
 
-		// Save before stopping
-		this.save();
+		// Do final save before stopping
+		this.saveGame();
 
 		// Stop the loop
 		this.loop.stop();
@@ -370,58 +420,62 @@ export class Game {
 
 	/**
 	 * Save the game state to localStorage.
+	 * Wrapper around SaveManager.save() for convenience.
 	 */
-	save(): void {
-		try {
-			const saveData = this.serialize();
-			const saveString = JSON.stringify(saveData);
-			localStorage.setItem(this.config.saveKey, saveString);
+	saveGame(): void {
+		// Update SaveManager's state before saving
+		const currentState = this.save.getState();
+		if (currentState) {
+			// Update run state
+			currentState.run.runTime = this.runTime;
+			currentState.run.currentPhase = this.phases.currentPhase;
+			currentState.run.highestPhase = Math.max(currentState.run.highestPhase || 1, this.phases.currentPhase);
 
-			this.events.emit('game_saved', {
-				timestamp: Date.now(),
-				saveSize: saveString.length,
-				isAutoSave: false
-			});
-
-			if (this.config.debug) {
-				console.log(`[Game] Saved (${saveString.length} bytes)`);
+			// Let managers serialize their own state
+			const serialized = this.serialize();
+			if (serialized && typeof serialized === 'object' && 'run' in serialized) {
+				const runData = serialized.run as any;
+				if (runData.resources) currentState.run.resources = runData.resources;
+				if (runData.producers) {
+					// ProducerManager serializes to a different format, we need to adapt
+					// For now, skip producer state in SaveManager
+				}
 			}
-		} catch (error) {
-			console.error('[Game] Save failed:', error);
+
+			this.save.setState(currentState);
 		}
+
+		// Trigger save
+		this.save.save({ isAutoSave: false, force: true });
 	}
 
 	/**
 	 * Load the game state from localStorage.
+	 * Wrapper around SaveManager.load() for convenience.
 	 *
 	 * @returns Whether load was successful
 	 */
-	load(): boolean {
-		try {
-			const saveString = localStorage.getItem(this.config.saveKey);
-			if (!saveString) {
-				return false;
-			}
-
-			const saveData = JSON.parse(saveString);
-			this.deserialize(saveData);
-
-			if (this.config.debug) {
-				console.log('[Game] Loaded save data');
-			}
-
-			return true;
-		} catch (error) {
-			console.error('[Game] Load failed:', error);
+	loadGame(): boolean {
+		const state = this.save.load();
+		if (!state) {
 			return false;
 		}
+
+		// Deserialize the state
+		const serialized = this.save.serialize();
+		if (serialized) {
+			this.deserialize(serialized);
+		}
+
+		return true;
 	}
 
 	/**
 	 * Delete the save data.
+	 * Wrapper around SaveManager.deleteSave() for convenience.
 	 */
 	deleteSave(): void {
-		localStorage.removeItem(this.config.saveKey);
+		this.save.deleteSave();
 		if (this.config.debug) {
 			console.log('[Game] Save deleted');
 		}
@@ -429,11 +483,12 @@ export class Game {
 
 	/**
 	 * Check if save data exists.
+	 * Wrapper around SaveManager.hasSave() for convenience.
 	 *
 	 * @returns Whether save data exists
 	 */
 	hasSave(): boolean {
-		return localStorage.getItem(this.config.saveKey) !== null;
+		return this.save.hasSave();
 	}
 
 	/**
@@ -503,29 +558,6 @@ export class Game {
 		// TODO: Restore eternal state
 	}
 
-	/**
-	 * Start the auto-save timer.
-	 */
-	private startAutoSave(): void {
-		if (this.autoSaveTimerId) {
-			clearInterval(this.autoSaveTimerId);
-		}
-
-		this.autoSaveTimerId = setInterval(() => {
-			this.save();
-		}, this.config.autoSaveInterval);
-	}
-
-	/**
-	 * Stop the auto-save timer.
-	 */
-	private stopAutoSave(): void {
-		if (this.autoSaveTimerId) {
-			clearInterval(this.autoSaveTimerId);
-			this.autoSaveTimerId = null;
-		}
-	}
-
 	// ============================================================================
 	// Visibility Handling
 	// ============================================================================
@@ -534,7 +566,7 @@ export class Game {
 	 * Called when tab becomes hidden.
 	 */
 	private onVisibilityHidden(): void {
-		this.save();
+		this.saveGame();
 
 		this.events.emit('game_paused', {
 			reason: 'visibility',
@@ -548,50 +580,37 @@ export class Game {
 	 * @param offlineTime - Time spent hidden in seconds
 	 */
 	private onVisibilityVisible(offlineTime: number): void {
-		// Calculate offline progress
-		this.calculateOfflineProgress(offlineTime);
+		// Get last played timestamp from save state
+		const saveState = this.save.getState();
+		if (saveState) {
+			const lastPlayedAt = saveState.meta.lastPlayed;
+			const currentProductionRate = this.resources.getProductionRate('pixels');
+
+			// Calculate offline progress using the OfflineProgress utility
+			const offlineResult = calculateOfflineProgressWithBreakdown(lastPlayedAt, currentProductionRate);
+
+			if (offlineResult.rewards.dreamPixels.gt(0)) {
+				// Apply offline gains
+				this.resources.add('pixels', offlineResult.rewards.dreamPixels);
+
+				// Emit offline gains event
+				this.events.emit('offline_gains_calculated', {
+					offlineTime: offlineResult.rewards.timeAway,
+					cappedTime: offlineResult.rewards.cappedTime,
+					efficiency: offlineResult.rewards.efficiency,
+					gains: new Map([['pixels', offlineResult.rewards.dreamPixels]])
+				});
+
+				if (this.config.debug) {
+					console.log(`[Game] Offline progress: ${offlineResult.breakdown.timeAwayFormatted} -> ${offlineResult.rewards.dreamPixels.toString()} pixels`);
+				}
+			}
+		}
 
 		this.events.emit('game_resumed', {
 			pauseDuration: offlineTime * 1000,
 			timestamp: Date.now()
 		});
-	}
-
-	/**
-	 * Calculate and apply offline progress.
-	 *
-	 * @param offlineSeconds - Time offline in seconds
-	 */
-	private calculateOfflineProgress(offlineSeconds: number): void {
-		// Cap offline time
-		const cappedTime = Math.min(offlineSeconds, this.config.maxOfflineTime);
-
-		// Apply efficiency
-		const effectiveTime = cappedTime * this.config.offlineEfficiency;
-
-		// Calculate gains for each resource
-		const gains = new Map<string, typeof ZERO>();
-
-		for (const resourceId of this.resources.unlockedResources) {
-			const rate = this.resources.getProductionRate(resourceId);
-			if (rate.gt(0)) {
-				const gain = rate.mul(effectiveTime);
-				this.resources.add(resourceId, gain);
-				gains.set(resourceId, gain);
-			}
-		}
-
-		// Emit offline gains event
-		this.events.emit('offline_gains_calculated', {
-			offlineTime: offlineSeconds,
-			cappedTime,
-			efficiency: this.config.offlineEfficiency,
-			gains
-		});
-
-		if (this.config.debug) {
-			console.log(`[Game] Offline progress: ${offlineSeconds.toFixed(1)}s -> ${effectiveTime.toFixed(1)}s effective`);
-		}
 	}
 
 	// ============================================================================
