@@ -5,6 +5,7 @@
  * The Game class follows the Manager pattern, coordinating between:
  * - EventManager: Pub/Sub communication
  * - ResourceManager: Resource amounts and production
+ * - ProducerManager: Producers/buildings and production pipeline
  * - GameLoop: Timing and updates
  *
  * Note: This file uses .svelte.ts extension to enable runes in non-component files.
@@ -15,8 +16,9 @@
 import { EventManager } from './EventManager';
 import { GameLoop, type LoopStats } from './GameLoop';
 import { ResourceManager } from '../systems/ResourceManager.svelte';
+import { ProducerManager } from '../systems/ProducerManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
-import { D, ZERO } from '../utils/decimal';
+import { D, ZERO, ONE } from '../utils/decimal';
 
 /**
  * Game state enum for tracking overall game status.
@@ -55,6 +57,11 @@ export class Game {
 	 * Resource manager for handling all game resources.
 	 */
 	readonly resources: ResourceManager;
+
+	/**
+	 * Producer manager for handling producers/buildings.
+	 */
+	readonly producers: ProducerManager;
 
 	/**
 	 * Game loop for timing and updates.
@@ -128,7 +135,10 @@ export class Game {
 		// 2. ResourceManager (core game state)
 		this.resources = new ResourceManager(this.events);
 
-		// 3. GameLoop (starts the heartbeat)
+		// 3. ProducerManager (producers and production pipeline)
+		this.producers = new ProducerManager(this.events, this.resources);
+
+		// 4. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -164,6 +174,7 @@ export class Game {
 		try {
 			// Initialize all managers
 			this.resources.init();
+			this.producers.init();
 
 			// TODO: Load save data
 			// const saveData = this.loadSave();
@@ -264,19 +275,22 @@ export class Game {
 		this.runTime += deltaTime;
 
 		// Update systems in order
-		// 1. Resources (production)
+		// 1. Resources (base production from ResourceManager)
 		this.resources.tick(deltaTime);
 
-		// 2. TODO: Phase checks
+		// 2. Producers (buildings and production pipeline)
+		this.producers.tick(deltaTime);
+
+		// 3. TODO: Phase checks
 		// this.phases.tick(deltaTime);
 
-		// 3. TODO: Automation
+		// 4. TODO: Automation
 		// this.automation.tick(deltaTime);
 
-		// 4. TODO: Story triggers
+		// 5. TODO: Story triggers
 		// this.story.tick(deltaTime);
 
-		// 5. TODO: Achievement checks
+		// 6. TODO: Achievement checks
 		// this.achievements.tick(deltaTime);
 
 		// Emit tick event (for debugging/stats)
@@ -373,7 +387,8 @@ export class Game {
 			run: {
 				currentPhase: this.currentPhase,
 				runTime: this.runTime,
-				resources: this.resources.serialize()
+				resources: this.resources.serialize(),
+				producers: this.producers.serialize()
 			},
 			eternal: {
 				// TODO: Add eternal state
@@ -394,6 +409,7 @@ export class Game {
 				currentPhase?: number;
 				runTime?: number;
 				resources?: unknown;
+				producers?: unknown;
 			};
 			eternal?: unknown;
 		};
@@ -410,6 +426,9 @@ export class Game {
 			}
 			if (save.run.resources) {
 				this.resources.deserialize(save.run.resources);
+			}
+			if (save.run.producers) {
+				this.producers.deserialize(save.run.producers);
 			}
 		}
 
@@ -513,11 +532,22 @@ export class Game {
 
 	/**
 	 * Perform a click action on a resource.
+	 * Includes base click amount plus any click power from producers.
 	 *
 	 * @param resourceId - Resource to click
+	 * @returns Total amount generated
 	 */
-	click(resourceId: string = 'pixels'): void {
-		this.resources.click(resourceId);
+	click(resourceId: string = 'pixels'): typeof ONE {
+		// Base click from resource definition
+		const baseAmount = this.resources.click(resourceId);
+
+		// Add click power from producers (click boosters)
+		const clickPower = this.producers.getClickPower();
+		if (clickPower.gt(0)) {
+			this.resources.addFromClick(resourceId, clickPower);
+		}
+
+		return baseAmount.add(clickPower);
 	}
 
 	/**

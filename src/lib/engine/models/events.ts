@@ -185,6 +185,56 @@ export interface UpgradeUnlockedEvent {
 }
 
 // ============================================================================
+// Producer Events
+// ============================================================================
+
+/**
+ * Emitted when a producer is purchased.
+ */
+export interface ProducerPurchasedEvent {
+	/** Producer identifier */
+	producerId: string;
+	/** Amount purchased */
+	amount: number;
+	/** New level after purchase */
+	newLevel: number;
+	/** Cost paid */
+	cost: Decimal;
+	/** Resource used for cost */
+	costResource: string;
+}
+
+/**
+ * Emitted when a producer is unlocked.
+ */
+export interface ProducerUnlockedEvent {
+	/** Producer identifier */
+	producerId: string;
+	/** Producer display name */
+	name: string;
+	/** Producer category */
+	category: string;
+}
+
+/**
+ * Emitted when a multiplier is added or changed.
+ */
+export interface MultiplierChangedEvent {
+	/** Multiplier identifier */
+	multiplierId: string;
+	/** Display name */
+	name: string;
+	/** Previous value (null if new) */
+	previousValue: Decimal | null;
+	/** New value */
+	newValue: Decimal;
+	/** Affected resource (empty = global) */
+	resourceId: string;
+	/** Source of the multiplier */
+	source: 'producer' | 'upgrade' | 'achievement' | 'phase' | 'eternal' | 'temporary' | 'other';
+}
+
+// ============================================================================
 // Automation Events
 // ============================================================================
 
@@ -319,6 +369,11 @@ export interface GameEventMap {
 	// Upgrades
 	upgrade_purchased: UpgradePurchasedEvent;
 	upgrade_unlocked: UpgradeUnlockedEvent;
+
+	// Producers
+	producer_purchased: ProducerPurchasedEvent;
+	producer_unlocked: ProducerUnlockedEvent;
+	multiplier_changed: MultiplierChangedEvent;
 
 	// Automation
 	automation_triggered: AutomationTriggeredEvent;

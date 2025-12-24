@@ -16,6 +16,15 @@ export { GameLoop, type LoopState, type LoopStats, type TickCallback } from './c
 // Systems (Managers)
 // ============================================================================
 export { ResourceManager } from './systems/ResourceManager.svelte';
+export { ProducerManager } from './systems/ProducerManager.svelte';
+export {
+	ProductionPipeline,
+	type Multiplier,
+	type MultiplierInput,
+	type MultiplierSource,
+	type MultiplierStackingType,
+	type ProductionBreakdown
+} from './systems/ProductionPipeline';
 
 // ============================================================================
 // Models & Types
@@ -56,7 +65,10 @@ export type {
 	StoryTriggeredEvent,
 	RebirthStartedEvent,
 	RebirthCompletedEvent,
-	OfflineGainsCalculatedEvent
+	OfflineGainsCalculatedEvent,
+	ProducerPurchasedEvent,
+	ProducerUnlockedEvent,
+	MultiplierChangedEvent
 } from './models/events';
 
 export type {
@@ -73,6 +85,21 @@ export {
 	getResourcesForPhase,
 	isResourceVisibleAtPhase
 } from './models/resources';
+
+export type {
+	ProducerDefinition,
+	ProducerState,
+	ProducerCategory,
+	ProducerIdType
+} from './models/producers';
+export {
+	ProducerId,
+	PRODUCER_DEFINITIONS,
+	getProducerDefinition,
+	getProducersByCategory,
+	getProducersForPhase,
+	isProducerVisibleAtPhase
+} from './models/producers';
 
 // ============================================================================
 // Utilities
