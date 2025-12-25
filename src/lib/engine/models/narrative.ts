@@ -191,7 +191,9 @@ export type ConsequenceType =
 	| 'achievement_unlock'
 	| 'multiplier_add'
 	| 'log_add'
-	| 'dialogue_trigger';
+	| 'dialogue_trigger'
+	| 'upgrade_unlock'
+	| 'producer_unlock';
 
 /**
  * A consequence of making a choice.
@@ -418,6 +420,9 @@ export interface StoryEvent {
 
 	/** Whether this event pauses the game */
 	pausesGame: boolean;
+
+	/** Optional title for revelations/cutscenes */
+	title?: string;
 }
 
 /**

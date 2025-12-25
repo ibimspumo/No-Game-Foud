@@ -26,6 +26,7 @@ import { UpgradeManager, type UpgradeManagerContext } from '../systems/UpgradeMa
 import { PhaseManager, type PhaseManagerContext } from '../systems/PhaseManager.svelte';
 import { NarrativeManager, type NarrativeContext } from '../systems/NarrativeManager.svelte';
 import { AchievementManager, type AchievementContext } from '../systems/AchievementManager.svelte';
+import { SecretManager, type SecretContext } from '../systems/SecretManager.svelte';
 import { type GameConfig, DEFAULT_CONFIG } from '../models/types';
 import { type VisualMode } from '../models/phase';
 import { getPhaseDefinitionsMap } from '../data/phases';
@@ -103,6 +104,11 @@ export class Game {
 	readonly achievements: AchievementManager;
 
 	/**
+	 * Secret manager for tracking and awarding secret discoveries.
+	 */
+	readonly secrets: SecretManager;
+
+	/**
 	 * Game loop for timing and updates.
 	 */
 	private readonly loop: GameLoop;
@@ -129,6 +135,22 @@ export class Game {
 	 * Total time played in this run (seconds).
 	 */
 	runTime = $state(0);
+
+	/**
+	 * Eternal state - persists across rebirths.
+	 */
+	private eternalState = $state({
+		totalPlayTime: 0,
+		totalRebirths: 0,
+		statistics: {
+			totalClicks: 0
+		}
+	});
+
+	/**
+	 * Pause tracking state.
+	 */
+	private pauseStartTime = $state<number | null>(null);
 
 	/**
 	 * Derived: Current game phase (1-20) from PhaseManager.
@@ -222,7 +244,10 @@ export class Game {
 		// 8. AchievementManager (achievements and rewards)
 		this.achievements = new AchievementManager(this.events);
 
-		// 9. GameLoop (starts the heartbeat)
+		// 9. SecretManager (secret discoveries)
+		this.secrets = new SecretManager(this.events);
+
+		// 10. GameLoop (starts the heartbeat)
 		this.loop = new GameLoop(
 			(dt) => this.tick(dt),
 			this.config
@@ -268,6 +293,7 @@ export class Game {
 			this.phases.init();
 			this.narrative.init();
 			this.achievements.init();
+			this.secrets.init();
 			this.save.init();
 
 			// Register initial upgrades (run + eternal + secret)
@@ -287,6 +313,14 @@ export class Game {
 
 			// Set up AchievementManager context for condition evaluation
 			this.achievements.setContext(this.createAchievementContext());
+
+			// Set up ProducerManager achievement checker
+			this.producers.setAchievementChecker((achievementId: string) =>
+				this.achievements.hasAchievement(achievementId)
+			);
+
+			// Set up SecretManager context for condition evaluation
+			this.secrets.setContext(this.createSecretContext());
 
 			// Sync resource manager with initial phase
 			this.resources.setPhase(this.phases.currentPhase);
@@ -392,6 +426,7 @@ export class Game {
 	pause(reason: 'user' | 'modal' | 'story' = 'user'): void {
 		if (this.status !== 'running') return;
 
+		this.pauseStartTime = Date.now();
 		this.loop.pause();
 		this.status = 'paused';
 
@@ -407,11 +442,14 @@ export class Game {
 	resume(): void {
 		if (this.status !== 'paused') return;
 
+		const pauseDuration = this.pauseStartTime ? Date.now() - this.pauseStartTime : 0;
+		this.pauseStartTime = null;
+
 		this.loop.resume();
 		this.status = 'running';
 
 		this.events.emit('game_resumed', {
-			pauseDuration: 0, // TODO: Track pause duration
+			pauseDuration,
 			timestamp: Date.now()
 		});
 	}
@@ -429,6 +467,7 @@ export class Game {
 	private tick(deltaTime: number): void {
 		this.tickCount++;
 		this.runTime += deltaTime;
+		this.eternalState.totalPlayTime += deltaTime;
 
 		// Update systems in order
 		// 1. Resources (base production from ResourceManager)
@@ -451,6 +490,9 @@ export class Game {
 
 		// 7. Achievement checks
 		this.achievements.tick(deltaTime);
+
+		// 8. Secret checks
+		this.secrets.tick(deltaTime);
 
 		// Emit tick event (for debugging/stats)
 		if (this.config.debug && this.tickCount % 60 === 0) {
@@ -625,7 +667,13 @@ export class Game {
 			},
 			eternal: {
 				upgrades: upgradeState.eternalLevels,
-				achievements: this.achievements.serialize()
+				achievements: this.achievements.serialize(),
+				secrets: this.secrets.serialize(),
+				totalPlayTime: this.eternalState.totalPlayTime,
+				totalRebirths: this.eternalState.totalRebirths,
+				statistics: {
+					totalClicks: this.eternalState.statistics.totalClicks
+				}
 			},
 			// Full upgrade state for complete restoration
 			upgradeState
@@ -652,6 +700,12 @@ export class Game {
 			eternal?: {
 				upgrades?: Record<string, number>;
 				achievements?: unknown;
+				secrets?: unknown;
+				totalPlayTime?: number;
+				totalRebirths?: number;
+				statistics?: {
+					totalClicks?: number;
+				};
 			};
 			upgradeState?: {
 				runLevels?: Record<string, number>;
@@ -686,6 +740,21 @@ export class Game {
 			}
 		}
 
+		// Restore eternal state
+		if (save.eternal) {
+			if (typeof save.eternal.totalPlayTime === 'number') {
+				this.eternalState.totalPlayTime = save.eternal.totalPlayTime;
+			}
+			if (typeof save.eternal.totalRebirths === 'number') {
+				this.eternalState.totalRebirths = save.eternal.totalRebirths;
+			}
+			if (save.eternal.statistics) {
+				if (typeof save.eternal.statistics.totalClicks === 'number') {
+					this.eternalState.statistics.totalClicks = save.eternal.statistics.totalClicks;
+				}
+			}
+		}
+
 		// Restore upgrade state
 		if (save.upgradeState) {
 			// Use full upgrade state if available
@@ -705,6 +774,11 @@ export class Game {
 		// Restore achievement state (persists across rebirths)
 		if (save.eternal?.achievements) {
 			this.achievements.deserialize(save.eternal.achievements);
+		}
+
+		// Restore secret state (persists across rebirths)
+		if (save.eternal?.secrets) {
+			this.secrets.deserialize(save.eternal.secrets);
 		}
 	}
 
@@ -775,6 +849,9 @@ export class Game {
 	 * @returns Total amount generated
 	 */
 	click(resourceId: string = 'pixels'): Decimal {
+		// Track total clicks in eternal state
+		this.eternalState.statistics.totalClicks++;
+
 		// Base click amount (usually 1)
 		const baseAmount = ONE;
 
@@ -936,8 +1013,7 @@ export class Game {
 				return this.runTime;
 			},
 			getTotalPlayTime: () => {
-				// TODO: Get from eternal state when implemented
-				return this.runTime;
+				return this.eternalState.totalPlayTime;
 			},
 			getCurrentPhaseTime: () => {
 				return this.phases.currentPhaseTime;
@@ -960,20 +1036,132 @@ export class Game {
 				return this.narrative.getChoice(choiceId);
 			},
 			getTotalRebirths: () => {
-				// TODO: Get from eternal state when implemented
-				return 0;
+				return this.eternalState.totalRebirths;
 			},
 			getTotalClicks: () => {
-				// TODO: Get from statistics when implemented
-				return 0;
+				return this.eternalState.statistics.totalClicks;
 			},
 			addPrimordialPixels: (amount: number) => {
 				// Add to eternal resources
 				this.resources.add('primordial', D(amount));
 			},
 			applyUnlock: (unlockId: string) => {
-				// TODO: Implement unlock system
-				console.log(`[Game] Unlock applied: ${unlockId}`);
+				// Apply various unlocks based on ID
+				if (unlockId.startsWith('resource_')) {
+					// Unlock a resource
+					const resourceId = unlockId.replace('resource_', '');
+					this.resources.unlock(resourceId);
+					if (this.config.debug) {
+						console.log(`[Game] Resource unlocked: ${resourceId}`);
+					}
+				} else if (unlockId.startsWith('upgrade_')) {
+					// Unlock an upgrade
+					const upgradeId = unlockId.replace('upgrade_', '');
+					this.upgrades.unlock(upgradeId);
+					if (this.config.debug) {
+						console.log(`[Game] Upgrade unlocked: ${upgradeId}`);
+					}
+				} else if (unlockId.startsWith('producer_')) {
+					// Unlock a producer
+					const producerId = unlockId.replace('producer_', '');
+					this.producers.unlock(producerId);
+					if (this.config.debug) {
+						console.log(`[Game] Producer unlocked: ${producerId}`);
+					}
+				} else {
+					// Generic unlock - log for debugging
+					// Features are typically unlocked via upgrade effects, not directly
+					// Custom unlock types can be handled here in the future
+					if (this.config.debug) {
+						console.log(`[Game] Generic unlock applied: ${unlockId}`);
+					}
+				}
+			}
+		};
+	}
+
+	/**
+	 * Create context for SecretManager condition evaluation.
+	 *
+	 * @returns Secret context object
+	 */
+	private createSecretContext(): SecretContext {
+		return {
+			getResourceAmount: (resourceId: string) => {
+				return this.resources.getAmount(resourceId);
+			},
+			getCurrentPhase: () => {
+				return this.phases.currentPhase;
+			},
+			getTotalPlayTime: () => {
+				return this.eternalState.totalPlayTime;
+			},
+			getTotalIdleTime: () => {
+				// Estimate idle time based on total play time minus active time
+				// For now, return a portion of total play time
+				return Math.floor(this.eternalState.totalPlayTime * 0.3);
+			},
+			getTimeSinceLastClick: () => {
+				// Return time since last click (tracked via click method)
+				// For now, return 0 as a placeholder - could be enhanced later
+				return 0;
+			},
+			getTotalClicks: () => {
+				return this.eternalState.statistics.totalClicks;
+			},
+			getCanvasesCompleted: () => {
+				// Get from phase progress - Phase 2 is canvas, Phase 3 is gallery
+				// Each canvas completion contributes to this count
+				if (this.phases.currentPhase < 2) return 0;
+				if (this.phases.currentPhase === 2) {
+					// In canvas phase, check progress
+					return Math.floor(this.phases.transitionProgress);
+				}
+				// After canvas phase, at least 1 canvas completed
+				return Math.max(1, this.phases.currentPhase - 1);
+			},
+			getCanvasCount: () => {
+				// Total canvas slots available based on phase
+				if (this.phases.currentPhase < 3) return 1;
+				return 64; // Full gallery = 64 canvases
+			},
+			getUpgradesPurchased: () => {
+				// Count total upgrades purchased
+				return this.upgrades.getTotalPurchased();
+			},
+			getLogsRead: () => {
+				// Get count of read logs from narrative manager
+				return this.narrative.logs.filter((log) => log.read).length;
+			},
+			getUniqueChoicesMade: () => {
+				// Get count of unique choices made
+				return this.narrative.getChoiceCount();
+			},
+			getUniqueProducersOwned: () => {
+				// Count producers with level > 0
+				return this.producers.unlockedProducers.filter(
+					(id) => this.producers.getLevel(id) > 0
+				).length;
+			},
+			addPrimordialPixels: (amount: number) => {
+				this.resources.add('primordial', D(amount));
+			},
+			applyUnlock: (unlockId: string) => {
+				// Reuse the same logic as AchievementContext
+				if (unlockId.startsWith('resource_')) {
+					const resourceId = unlockId.replace('resource_', '');
+					this.resources.unlock(resourceId);
+				} else if (unlockId.startsWith('upgrade_')) {
+					const upgradeId = unlockId.replace('upgrade_', '');
+					this.upgrades.unlock(upgradeId);
+				} else if (unlockId.startsWith('producer_')) {
+					const producerId = unlockId.replace('producer_', '');
+					this.producers.unlock(producerId);
+				}
+			},
+			setFlag: (flag: string, value: boolean | string) => {
+				// Set flag in narrative manager for persistence
+				this.narrative.setFlag(flag, value);
 			}
 		};
 	}

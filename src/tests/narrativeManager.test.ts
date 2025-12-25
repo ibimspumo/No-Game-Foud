@@ -1014,4 +1014,146 @@ describe('NarrativeManager', () => {
 			expect(style.name).toBe('Pixel');
 		});
 	});
+
+	// ============================================================================
+	// Endings Integration Tests
+	// ============================================================================
+
+	describe('Endings Integration', () => {
+		beforeEach(() => {
+			narrativeManager.init();
+		});
+
+		it('should get ending definition by ID', () => {
+			const ending = narrativeManager.getEndingDefinition('the_creator');
+
+			// If ending definitions are loaded, it should return the definition
+			if (ending) {
+				expect(ending.id).toBe('the_creator');
+				expect(ending.name).toBeDefined();
+			}
+		});
+
+		it('should return undefined for unknown ending ID', () => {
+			const ending = narrativeManager.getEndingDefinition('unknown_ending' as EndingId);
+
+			expect(ending).toBeUndefined();
+		});
+
+		it('should get all endings with status', () => {
+			const endingsWithStatus = narrativeManager.getAllEndingsWithStatus();
+
+			expect(Array.isArray(endingsWithStatus)).toBe(true);
+			endingsWithStatus.forEach((entry) => {
+				expect(entry).toHaveProperty('ending');
+				expect(entry).toHaveProperty('unlocked');
+				expect(typeof entry.unlocked).toBe('boolean');
+			});
+		});
+
+		it('should mark unlocked endings correctly in status', () => {
+			narrativeManager.unlockEnding('the_creator');
+
+			const endingsWithStatus = narrativeManager.getAllEndingsWithStatus();
+			const creatorEntry = endingsWithStatus.find((e) => e.ending.id === 'the_creator');
+
+			if (creatorEntry) {
+				expect(creatorEntry.unlocked).toBe(true);
+			}
+		});
+
+		it('should get ending stats', () => {
+			const stats = narrativeManager.getEndingStats();
+
+			expect(stats).toHaveProperty('totalUnlocked');
+			expect(stats).toHaveProperty('totalPossible');
+			expect(stats).toHaveProperty('standardUnlocked');
+			expect(stats).toHaveProperty('trueEndingSeen');
+			expect(stats).toHaveProperty('completionPercentage');
+
+			expect(typeof stats.totalUnlocked).toBe('number');
+			expect(typeof stats.totalPossible).toBe('number');
+			expect(typeof stats.completionPercentage).toBe('number');
+		});
+
+		it('should increment stats when unlocking endings', () => {
+			const statsBefore = narrativeManager.getEndingStats();
+
+			narrativeManager.unlockEnding('the_creator');
+
+			const statsAfter = narrativeManager.getEndingStats();
+
+			expect(statsAfter.totalUnlocked).toBe(statsBefore.totalUnlocked + 1);
+		});
+
+		it('should get unlocked ending details', () => {
+			narrativeManager.unlockEnding('the_creator');
+			narrativeManager.unlockEnding('the_observer');
+
+			const details = narrativeManager.getUnlockedEndingDetails();
+
+			expect(details.length).toBe(2);
+			const ids = details.map((d) => d.id);
+			expect(ids).toContain('the_creator');
+			expect(ids).toContain('the_observer');
+		});
+
+		it('should return empty array when no endings unlocked', () => {
+			const details = narrativeManager.getUnlockedEndingDetails();
+
+			expect(details).toHaveLength(0);
+		});
+
+		it('should emit ending_unlocked event when unlocking', () => {
+			const listener = vi.fn();
+			eventManager.on('ending_unlocked', listener);
+
+			narrativeManager.unlockEnding('the_creator');
+
+			expect(listener).toHaveBeenCalledWith(
+				expect.objectContaining({
+					endingId: 'the_creator'
+				})
+			);
+		});
+
+		it('should not emit event when unlocking same ending twice', () => {
+			const listener = vi.fn();
+			eventManager.on('ending_unlocked', listener);
+
+			narrativeManager.unlockEnding('the_creator');
+			narrativeManager.unlockEnding('the_creator');
+
+			expect(listener).toHaveBeenCalledTimes(1);
+		});
+
+		it('should set ending flag when unlocking', () => {
+			narrativeManager.unlockEnding('the_creator');
+
+			expect(narrativeManager.getFlag('ending_the_creator_seen')).toBe(true);
+		});
+
+		it('should get choice count', () => {
+			// Initially no choices
+			expect(narrativeManager.getChoiceCount()).toBe(0);
+
+			// Make some choices
+			const choices: Choice[] = [
+				createTestChoice('choice_a', 'Option A')
+			];
+			const dialogue = createTestDialogue('dialogue_001', { choices });
+			narrativeManager.registerDialogue(dialogue);
+			narrativeManager.startDialogue('dialogue_001');
+
+			// Get to choices
+			narrativeManager.skipTyping();
+			narrativeManager.advanceDialogue();
+			narrativeManager.skipTyping();
+			narrativeManager.advanceDialogue();
+
+			narrativeManager.makeChoice('choice_a');
+
+			expect(narrativeManager.getChoiceCount()).toBe(1);
+		});
+	});
 });

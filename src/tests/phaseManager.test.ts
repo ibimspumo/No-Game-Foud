@@ -417,6 +417,9 @@ describe('PhaseManager', () => {
 			});
 			phaseManager.setContext(richContext);
 
+			// Tick to update canAdvance state
+			phaseManager.tick(0.1);
+
 			const success = await phaseManager.advancePhase();
 			expect(success).toBe(true);
 			expect(phaseManager.currentPhase).toBe(2);
@@ -427,6 +430,9 @@ describe('PhaseManager', () => {
 				getResourceAmount: vi.fn().mockReturnValue(D(100))
 			});
 			phaseManager.setContext(richContext);
+
+			// Tick to update canAdvance state
+			phaseManager.tick(0.1);
 
 			await phaseManager.advancePhase();
 
@@ -442,6 +448,9 @@ describe('PhaseManager', () => {
 
 			expect(phaseManager.isPhaseUnlocked(2)).toBe(false);
 
+			// Tick to update canAdvance state
+			phaseManager.tick(0.1);
+
 			await phaseManager.advancePhase();
 
 			expect(phaseManager.isPhaseUnlocked(2)).toBe(true);
@@ -455,6 +464,9 @@ describe('PhaseManager', () => {
 
 			const listener = vi.fn();
 			eventManager.on('phase_entered', listener);
+
+			// Tick to update canAdvance state
+			phaseManager.tick(0.1);
 
 			await phaseManager.advancePhase();
 
@@ -501,6 +513,10 @@ describe('PhaseManager', () => {
 				getResourceAmount: vi.fn().mockReturnValue(D(100))
 			});
 			phaseManager.setContext(richContext);
+
+			// Tick to update canAdvance state
+			phaseManager.tick(0.1);
+
 			await phaseManager.advancePhase();
 
 			const serialized = phaseManager.serialize();

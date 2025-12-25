@@ -37,6 +37,13 @@ import {
 	SPEAKER_STYLES
 } from '../models/narrative';
 import { D, ZERO } from '../utils/decimal';
+import {
+	type EndingDefinition,
+	getEndingDefinition as getEndingDef,
+	getUnlockedEndings,
+	calculateEndingStats,
+	ALL_ENDINGS
+} from '../data/endings';
 
 // ============================================================================
 // Configuration Constants
@@ -175,6 +182,37 @@ export class NarrativeManager implements Manager {
 	 */
 	typewriterSpeed = $state(DEFAULT_TYPEWRITER_SPEED);
 
+	/**
+	 * Set of flag keys that should persist across rebirths (eternal flags).
+	 * Flags like "ending_X_seen", "secret_X_found" should be eternal.
+	 */
+	private eternalFlagKeys = new Set<string>([
+		// Ending-related flags
+		'ending_transcendence_seen',
+		'ending_consumption_seen',
+		'ending_harmony_seen',
+		'ending_void_seen',
+		// Secret-related flags
+		'secret_konami_found',
+		'secret_night_owl',
+		'secret_forty_two',
+		'secret_dev_mode',
+		'secret_hidden_message',
+		'secret_speed_demon',
+		'secret_zen_master',
+		'secret_pixel_artist',
+		'secret_memory_keeper',
+		'secret_choice_explorer',
+		'secret_collector',
+		'secret_watcher',
+		'secret_patient_one',
+		'secret_true_singularity',
+		'secret_glitch_hunter',
+		// Meta flags
+		'all_logs_viewed',
+		'explored_all_branches'
+	]);
+
 	// ============================================================================
 	// Derived State
 	// ============================================================================
@@ -290,9 +328,47 @@ export class NarrativeManager implements Manager {
 		this.dialoguePaused = false;
 		this.checkAccumulator = 0;
 
-		// Keep playerChoices and flags that are marked as eternal
-		// For now, we clear all (eternal handling would be separate)
-		// TODO: Implement eternal flag separation
+		// Preserve eternal flags, clear run-specific ones
+		const preservedFlags = new Map<string, boolean | string | number>();
+		for (const [key, value] of this.flags) {
+			if (this.isEternalFlag(key)) {
+				preservedFlags.set(key, value);
+			}
+		}
+		this.flags = preservedFlags;
+
+		// Clear run-specific choices but keep ones that affect eternal state
+		// (Most choices are run-specific in this game design)
+		this.playerChoices = new Map();
+	}
+
+	/**
+	 * Check if a flag key is eternal (persists across rebirths).
+	 *
+	 * @param key - Flag key to check
+	 * @returns Whether the flag is eternal
+	 */
+	isEternalFlag(key: string): boolean {
+		// Check direct membership
+		if (this.eternalFlagKeys.has(key)) {
+			return true;
+		}
+		// Also check patterns: flags starting with "ending_", "secret_", "meta_" are eternal
+		return (
+			key.startsWith('ending_') ||
+			key.startsWith('secret_') ||
+			key.startsWith('meta_') ||
+			key.startsWith('eternal_')
+		);
+	}
+
+	/**
+	 * Mark a flag key as eternal (will persist across rebirths).
+	 *
+	 * @param key - Flag key to mark as eternal
+	 */
+	markFlagAsEternal(key: string): void {
+		this.eternalFlagKeys.add(key);
 	}
 
 	/**
@@ -788,6 +864,15 @@ export class NarrativeManager implements Manager {
 	}
 
 	/**
+	 * Get the total number of unique choices made.
+	 *
+	 * @returns Number of unique choices made
+	 */
+	getChoiceCount(): number {
+		return this.playerChoices.size;
+	}
+
+	/**
 	 * Apply consequences from a choice.
 	 */
 	private applyConsequences(consequences: Consequence[]): void {
@@ -827,17 +912,37 @@ export class NarrativeManager implements Manager {
 				setTimeout(() => this.startDialogue(payload.dialogueId), 0);
 				break;
 			}
-			// Other consequence types would be handled by other managers
-			// through events - we emit an event for them to pick up
+			// Other consequence types are handled by other managers through events
 			case 'resource_add':
 			case 'resource_multiply':
 			case 'achievement_unlock':
 			case 'multiplier_add':
-			case 'phase_skip':
+			case 'phase_skip': {
 				// Emit event for other managers to handle
-				// TODO: Define consequence events
-				console.log('[NarrativeManager] Consequence deferred:', consequence);
+				this.events.emit('consequence_requested', {
+					sourceId: 'narrative_consequence',
+					type: consequence.type as
+						| 'resource_add'
+						| 'resource_multiply'
+						| 'achievement_unlock'
+						| 'multiplier_add'
+						| 'phase_skip'
+						| 'upgrade_unlock'
+						| 'producer_unlock',
+					payload: consequence.payload as Record<string, unknown>
+				});
 				break;
+			}
+			case 'upgrade_unlock':
+			case 'producer_unlock': {
+				// Emit unlock event for other managers
+				this.events.emit('consequence_requested', {
+					sourceId: 'narrative_consequence',
+					type: consequence.type as 'upgrade_unlock' | 'producer_unlock',
+					payload: consequence.payload as Record<string, unknown>
+				});
+				break;
+			}
 		}
 	}
 
@@ -988,9 +1093,19 @@ export class NarrativeManager implements Manager {
 				return this.startDialogue(event.contentId);
 
 			case 'revelation':
-			case 'cutscene':
-				// TODO: Implement revelation/cutscene handling
+			case 'cutscene': {
+				// Emit special event for UI to handle revelations/cutscenes differently
+				// These are visually distinct from regular dialogues - they may include
+				// special animations, full-screen overlays, or other visual effects
+				this.events.emit('revelation_triggered', {
+					contentId: event.contentId,
+					type: event.type,
+					pausesGame: true,
+					title: event.title
+				});
+				// Also start the dialogue content for the revelation
 				return this.startDialogue(event.contentId);
+			}
 
 			default:
 				console.warn(`[NarrativeManager] Unknown event type: ${event.type}`);
@@ -1185,7 +1300,23 @@ export class NarrativeManager implements Manager {
 	 * @param endingId - Ending to unlock
 	 */
 	unlockEnding(endingId: EndingId): void {
+		if (this.unlockedEndings.has(endingId)) return;
+
 		this.unlockedEndings.add(endingId);
+
+		// Get ending details and emit event
+		const endingDef = getEndingDef(endingId);
+		this.events.emit('ending_unlocked', {
+			endingId,
+			endingName: endingDef?.name ?? endingId,
+			endingType: endingDef?.type ?? 'standard',
+			path: endingDef?.path ?? 'unknown',
+			ppBonus: endingDef?.unlocks.ppBonus ?? 0,
+			timestamp: Date.now()
+		});
+
+		// Set eternal flag for this ending
+		this.setFlag(`ending_${endingId}_seen`, true);
 	}
 
 	/**
@@ -1195,6 +1326,75 @@ export class NarrativeManager implements Manager {
 	 */
 	hasEnding(endingId: EndingId): boolean {
 		return this.unlockedEndings.has(endingId);
+	}
+
+	/**
+	 * Get the full definition for an ending.
+	 *
+	 * @param endingId - Ending ID to look up
+	 * @returns Ending definition or undefined if not found
+	 */
+	getEndingDefinition(endingId: EndingId): EndingDefinition | undefined {
+		return getEndingDef(endingId);
+	}
+
+	/**
+	 * Get all ending definitions with their unlock status.
+	 *
+	 * @returns Array of endings with unlock status
+	 */
+	getAllEndingsWithStatus(): Array<{ ending: EndingDefinition; unlocked: boolean }> {
+		return ALL_ENDINGS.map((ending) => ({
+			ending,
+			unlocked: this.unlockedEndings.has(ending.id as EndingId)
+		}));
+	}
+
+	/**
+	 * Get statistics about ending completion.
+	 *
+	 * @returns Ending completion statistics
+	 */
+	getEndingStats(): {
+		totalUnlocked: number;
+		totalPossible: number;
+		standardUnlocked: number;
+		trueEndingSeen: boolean;
+		completionPercentage: number;
+	} {
+		// Convert unlocked endings to achievement IDs for the helper function
+		const achievementIds = new Set<string>();
+		for (const endingId of this.unlockedEndings) {
+			const def = getEndingDef(endingId);
+			if (def?.unlocks.achievement) {
+				achievementIds.add(def.unlocks.achievement);
+			}
+		}
+
+		const stats = calculateEndingStats(achievementIds);
+		return {
+			totalUnlocked: this.unlockedEndings.size,
+			totalPossible: ALL_ENDINGS.length,
+			standardUnlocked: stats.standardUnlocked,
+			trueEndingSeen: stats.trueEndingSeen,
+			completionPercentage: (this.unlockedEndings.size / ALL_ENDINGS.length) * 100
+		};
+	}
+
+	/**
+	 * Get details for all unlocked endings.
+	 *
+	 * @returns Array of unlocked ending definitions
+	 */
+	getUnlockedEndingDetails(): EndingDefinition[] {
+		const details: EndingDefinition[] = [];
+		for (const endingId of this.unlockedEndings) {
+			const def = getEndingDef(endingId);
+			if (def) {
+				details.push(def);
+			}
+		}
+		return details;
 	}
 
 	// ============================================================================

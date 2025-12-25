@@ -91,6 +91,12 @@ export class ProducerManager implements Manager {
 	private pipeline: ProductionPipeline;
 
 	/**
+	 * Achievement checker callback for unlock conditions.
+	 * Set via setAchievementChecker() after initialization.
+	 */
+	private achievementChecker: ((achievementId: string) => boolean) | null = null;
+
+	/**
 	 * Internal state for all producers.
 	 */
 	private state = $state<Record<string, InternalProducerState>>({});
@@ -128,6 +134,16 @@ export class ProducerManager implements Manager {
 		this.events = events;
 		this.resources = resources;
 		this.pipeline = new ProductionPipeline();
+	}
+
+	/**
+	 * Set the achievement checker callback.
+	 * This allows the ProducerManager to check achievements without direct coupling.
+	 *
+	 * @param checker - Callback that returns true if achievement is unlocked
+	 */
+	setAchievementChecker(checker: (achievementId: string) => boolean): void {
+		this.achievementChecker = checker;
 	}
 
 	/**
@@ -685,7 +701,10 @@ export class ProducerManager implements Manager {
 					break;
 
 				case 'achievement':
-					// TODO: Check achievement manager
+					// Check if achievement is unlocked using the callback
+					if (this.achievementChecker && condition.id) {
+						met = this.achievementChecker(condition.id);
+					}
 					break;
 			}
 

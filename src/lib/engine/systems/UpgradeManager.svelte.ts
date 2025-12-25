@@ -669,6 +669,19 @@ export class UpgradeManager implements Manager {
 	}
 
 	/**
+	 * Get total number of upgrades purchased (sum of all levels).
+	 *
+	 * @returns Total upgrade purchases count
+	 */
+	getTotalPurchased(): number {
+		let total = 0;
+		for (const upgradeState of Object.values(this.state)) {
+			total += upgradeState.level;
+		}
+		return total;
+	}
+
+	/**
 	 * Check if an upgrade is unlocked (visible).
 	 *
 	 * @param id - Upgrade ID

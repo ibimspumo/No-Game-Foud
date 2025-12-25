@@ -372,6 +372,41 @@ export interface EndingUnlockedEvent {
 	path: 'peaceful' | 'consuming' | 'neutral';
 }
 
+/**
+ * Emitted when a story consequence needs to be applied by another manager.
+ * This allows NarrativeManager to trigger effects without tight coupling.
+ */
+export interface ConsequenceRequestedEvent {
+	/** Source choice or event that triggered this consequence */
+	sourceId: string;
+	/** Type of consequence */
+	type:
+		| 'resource_add'
+		| 'resource_multiply'
+		| 'achievement_unlock'
+		| 'multiplier_add'
+		| 'phase_skip'
+		| 'upgrade_unlock'
+		| 'producer_unlock';
+	/** Payload with consequence-specific data */
+	payload: Record<string, unknown>;
+}
+
+/**
+ * Emitted when a revelation or cutscene should be displayed.
+ * UI components should listen for this to show special content.
+ */
+export interface RevelationTriggeredEvent {
+	/** Content identifier */
+	contentId: string;
+	/** Type of special content */
+	type: 'revelation' | 'cutscene';
+	/** Whether this should pause the game */
+	pausesGame: boolean;
+	/** Optional title for the revelation */
+	title?: string;
+}
+
 // ============================================================================
 // Rebirth/Prestige Events
 // ============================================================================
@@ -466,6 +501,8 @@ export interface GameEventMap {
 	choice_made: ChoiceMadeEvent;
 	flag_set: FlagSetEvent;
 	ending_unlocked: EndingUnlockedEvent;
+	consequence_requested: ConsequenceRequestedEvent;
+	revelation_triggered: RevelationTriggeredEvent;
 
 	// Rebirth
 	rebirth_started: RebirthStartedEvent;
