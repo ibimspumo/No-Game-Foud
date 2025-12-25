@@ -9,6 +9,8 @@
 	import type { Snippet } from 'svelte';
 	import { getGameContext, formatNumber, D } from '$lib/engine';
 	import Button from '../core/Button.svelte';
+	import ProducerList from './ProducerList.svelte';
+	import AchievementList from './AchievementList.svelte';
 	import type { UpgradeDefinition } from '$lib/engine/models/upgrades';
 
 	interface Props {
@@ -179,10 +181,7 @@
 		{:else if activeTab === 'producers'}
 			<div class="content-section">
 				<h3 class="section-title">Producers</h3>
-				<p class="placeholder-text">
-					Purchase producers to generate pixels automatically.
-				</p>
-				<!-- TODO: Producer list component -->
+				<ProducerList />
 			</div>
 		{:else if activeTab === 'stats'}
 			<div class="content-section">
@@ -236,10 +235,7 @@
 						({game.achievements.completionPercentage.toFixed(1)}%)
 					</span>
 				</div>
-				<p class="placeholder-text">
-					Unlock achievements by reaching milestones.
-				</p>
-				<!-- TODO: Achievement list component -->
+				<AchievementList />
 			</div>
 		{/if}
 

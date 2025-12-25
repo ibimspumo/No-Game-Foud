@@ -8,6 +8,8 @@
 // Layout
 export { default as Header } from './Header.svelte';
 export { default as Sidebar } from './Sidebar.svelte';
+export { default as ProducerList } from './ProducerList.svelte';
+export { default as AchievementList } from './AchievementList.svelte';
 
 // Overlays & Modals
 export { default as Dialogue } from './Dialogue.svelte';

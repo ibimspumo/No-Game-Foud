@@ -371,20 +371,22 @@ export class ResourceManager implements Manager {
 
 	/**
 	 * Perform a click action for a resource.
-	 * Uses the resource's base click amount plus any multipliers.
+	 * This is a low-level method that only applies the base click amount.
+	 * For click actions with bonuses and multipliers, use Game.click() instead.
 	 *
 	 * @param id - Resource ID
+	 * @param multiplier - Optional multiplier to apply to base click amount
 	 * @returns Amount generated (or ZERO if not clickable)
 	 */
-	click(id: string): Decimal {
+	click(id: string, multiplier: DecimalSource = 1): Decimal {
 		const def = RESOURCE_DEFINITIONS[id];
 		if (!def?.canClick) return ZERO;
 
 		const resourceState = this.state[id];
 		if (!resourceState?.unlocked) return ZERO;
 
-		const amount = D(def.baseClickAmount);
-		// TODO: Apply click multipliers from upgrades
+		const baseAmount = D(def.baseClickAmount);
+		const amount = baseAmount.mul(multiplier);
 		this.addFromClick(id, amount);
 		return amount;
 	}

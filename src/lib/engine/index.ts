@@ -61,6 +61,12 @@ export {
 	type AchievementContext,
 	type AchievementNotification
 } from './systems/AchievementManager.svelte';
+export {
+	SecretManager,
+	type SecretContext,
+	type SecretNotification,
+	type SerializedSecrets
+} from './systems/SecretManager.svelte';
 
 // ============================================================================
 // Models & Types
@@ -305,6 +311,25 @@ export {
 	getDependentAchievements,
 	calculateAchievementStats
 } from './data/achievements';
+
+// Secret Data
+export type {
+	SecretDefinition,
+	SecretCondition,
+	SecretReward,
+	SecretType
+} from './data/secrets';
+export {
+	SECRET_DEFINITIONS,
+	SECRET_MAP,
+	getSecretDefinition,
+	getSecretsByType,
+	getAllSecrets,
+	getSecretHints,
+	getUndiscoveredHints,
+	getTotalSecretPP,
+	getSecretStats
+} from './data/secrets';
 
 // ============================================================================
 // Utilities
